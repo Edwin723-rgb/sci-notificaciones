@@ -1051,6 +1051,21 @@ async function gmailApiSend(accessToken, rawB64Url) {
   return j;
 }
 
+function formatGmailSendError(rawMsg) {
+  const m = String(rawMsg || '');
+  if (/Gmail API has not been used|has not been used in project|SERVICE_DISABLED|API has not been enabled|is disabled/i.test(m)) {
+    const projMatch = m.match(/project\s+(\d+)/i);
+    const enableUrl = projMatch
+      ? 'https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=' + projMatch[1]
+      : 'https://console.cloud.google.com/apis/library/gmail.googleapis.com';
+    return 'La Gmail API no está activada en tu proyecto de Google Cloud.\n\n'
+      + '1) Abre este enlace y pulsa «Activar» (Enable):\n' + enableUrl + '\n\n'
+      + '2) Espera 2 a 5 minutos y vuelve a enviar.\n\n'
+      + 'Mientras tanto puedes usar «Abrir en cliente de correo…».';
+  }
+  return 'No se pudo enviar con Gmail:\n\n' + m + '\n\nPuedes usar «Abrir en cliente de correo…» como respaldo.';
+}
+
 // ── DESTINATARIOS ──────────────────────────────────────────────────────────────
 const ABOGADOS = [
   { nombre: 'SCI', apellido: 'Despacho', emails: ['sci@solucionescorporativas.mx'] },
@@ -2002,7 +2017,7 @@ async function sendEmail() {
     sentAlert.className = 'alert success show';
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
-    alert('No se pudo enviar con Gmail: ' + msg + '\n\nPuedes usar «Abrir en cliente de correo…» como respaldo.');
+    alert(formatGmailSendError(msg));
     if (/401|403|invalid/i.test(msg)) {
       sessionStorage.removeItem('sci_access_token');
       sessionStorage.removeItem('sci_token_exp');
