@@ -455,6 +455,7 @@
             <option value="Ángel Luque">Ángel Luque</option>
             <option value="Samuel Méndez">Samuel Méndez</option>
             <option value="Sergio Iván">Sergio Iván</option>
+            <option value="Saúl Córdova">Saúl Córdova</option>
             <option value="Edwin Morales">Edwin Morales</option>
             <option value="Ingrid Correa">Ingrid Correa</option>
           </select>
@@ -695,6 +696,7 @@ function urgenciaLabel(dias) {
 
 // ── DESTINATARIOS ──────────────────────────────────────────────────────────────
 const ABOGADOS = [
+  { nombre: 'SCI', apellido: 'Despacho', emails: ['sci@solucionescorporativas.mx'] },
   { nombre: 'Dainer',    apellido: 'Chable',    emails: ['dainerchable@gmail.com'] },
   { nombre: 'Lisbeth',   apellido: 'Losve',     emails: ['lisbeth@solucionescorporativas.mx','lisbethlosve_@outlook.es'] },
   { nombre: 'Alejandra', apellido: 'Herrera',   emails: ['alejandra_herrwea99@hotmail.com','alejandra@solucionescorporativas.mx'] },
@@ -702,6 +704,7 @@ const ABOGADOS = [
   { nombre: 'Ángel',     apellido: 'Luque',     emails: ['angelluquepalomino@gmail.com'] },
   { nombre: 'Samuel',    apellido: 'Méndez',    emails: ['smendez@solucionescorporativas.mx'] },
   { nombre: 'Sergio',    apellido: 'Iván',      emails: ['sivg009@gmail.com'] },
+  { nombre: 'Saúl',      apellido: 'Córdova',   emails: ['saul.cordov@solucionescorporativas.mx'] },
   { nombre: 'Edwin',     apellido: 'Morales',   emails: ['edwinmmoralesg@gmail.com'] },
   { nombre: 'Ingrid',    apellido: 'Correa',    emails: ['janice_correa18@hotmail.com'] },
 ];
@@ -951,8 +954,125 @@ function toIsoDate(d, m, y) {
 }
 
 /**
- * Reglas simples sobre el texto plano (similar a lo que harías con markitdown+tesseract local).
+ * Reglas sobre texto plano y saltos de línea (cédulas mexicanas, OCR).
  */
+function cleanClienteCandidate(s) {
+  if (!s) return null;
+  let t = s.replace(/\s+/g, ' ').trim();
+  t = t.replace(/^[,\s:;.\-–]+|[,\s:;.\-–]+$/g, '');
+  t = t.replace(/\b(el|la|los|las|del|de|y|e|que|esta?|este?)\b\s+/gi, '');
+  if (/juzgado|tribunal|órgano|expediente|notifica|secretar/i.test(t)) return null;
+  if (t.length < 5 || t.length > 140) return null;
+  return t;
+}
+
+function extractClienteFromText(raw, flat) {
+  const patterns = [
+    /notif(?:ica|ique|íquese|ícase|iquese)\s+(?:a|al|a\s+la|personalmente\s+a)\s+([^\n.;]{8,140})/i,
+    /notificad[ao]s?\s*(?:a|al)\s*[:\s]+([^\n.;]{8,140})/i,
+    /parte\s+notificada\s*[:\s]+([^\n.;]{8,140})/i,
+    /compareciente\s*[:\s]+([^\n.;]{8,140})/i,
+    /ciudadan[oa]\s+([A-ZÁÉÍÓÚÑ][^\n.;]{6,120})/i,
+    /C\.?\s*[\.]?\s*([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñÑÁÉÍÓÚÜ\s,\.-]{5,100}?)(?=\s*,\s*(?:rfc|domicilio|con|según)|\s+rfc|\s+con\s+matr|\s+domicilio|\.|;)/i,
+    /demandad[ao]s?\s*[:\s]+([^\n.;]{8,140})/i,
+    /demandante\s*[:\s]+([^\n.;]{8,140})/i,
+    /en\s+contra\s+de\s+([^\n.;]{8,140})/i,
+    /contribuyente\s*[:\s]+([^\n.;]{8,140})/i,
+    /(?:promovente|actora?)\s*[:\s]+([^\n.;]{8,140})/i,
+    /(?:notificado\s*(?:a|:))\s*([A-ZÁÉÍÓÚÑÑ0-9][^.;:\n]{6,120})/i,
+    /representación\s+de\s+([^\n.;]{8,100})/i
+  ];
+  let best = null;
+  let bestLen = 0;
+  for (let i = 0; i < patterns.length; i++) {
+    const m = raw.match(patterns[i]) || flat.match(patterns[i]);
+    if (!m || !m[1]) continue;
+    const q = cleanClienteCandidate(m[1]);
+    if (q && q.length > bestLen) {
+      best = q;
+      bestLen = q.length;
+    }
+  }
+  return best;
+}
+
+function extractActuacionFromText(raw, flat) {
+  const rawN = raw.replace(/\r\n/g, '\n');
+  const blocks = [
+    /\bACUERDO\s*:?\s*([\s\S]{30,650}?)(?=\n\s*(?:EXPEDIENTE|Expediente|N[°º]\s*Exp|JUZGADO|Página\s+\d|El\s+(?:Secret|Sentido)|\s*Firma\s*:|$))/i,
+    /\bAcuerdo\s*(?:\([^\)]{0,40}\))?\s*:?\s*([\s\S]{30,600}?)(?=\n\n|\n\s*(?:EXPEDIENTE|JUZGADO|Asunto|Med|Proveído)|$)/i,
+    /\b(?:RESOLUCI[OÓ]N|Resoluci[oó]n)\s*[:\s]+([\s\S]{30,550}?)(?=\n\n|EXPEDIENTE|Juzgado|Página)/i,
+    /NOTIF[ÍI]QUESE|notif[íi]quese|Notifíquese[^.]{5,120}\.\s*([\s\S]{40,550}?)(?=\n\n|EXPEDIENTE|JUZGADO|$)/i,
+    /Por\s+lo\s+(?:expuesto|analizado|considerando)[^.]{0,120}\.\s*([\s\S]{50,550}?)(?=\n\n|EXPEDIENTE|$)/i,
+    /SE\s+RESUELVE\s*:\s*([\s\S]{40,550}?)(?=\n\n|EXPEDIENTE|JUZGADO|$)/i
+  ];
+  for (let i = 0; i < blocks.length; i++) {
+    const m = rawN.match(blocks[i]);
+    if (m && m[1]) {
+      let t = m[1].replace(/\s+/g, ' ').trim();
+      t = t.replace(/^[.,;\s:–-]+|[.,;\s:–-]+$/g, '');
+      if (t.length >= 28) return t.slice(0, 520);
+    }
+  }
+  const lines = rawN.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  for (let j = 0; j < lines.length; j++) {
+    const l = lines[j];
+    if (/admite|niega|requiere|concede|dése\s+vista|dígase|otorga|declara|ordena|subsiste|revoca|aprueba|hágase|téngase|agréguese|gírese/i.test(l) && l.length > 38) {
+      let block = l;
+      if (j + 1 < lines.length && lines[j + 1].length > 20 && !/^expediente|juzgado|folio/i.test(lines[j + 1])) {
+        block += ' ' + lines[j + 1];
+      }
+      return block.replace(/\s+/g, ' ').trim().slice(0, 520);
+    }
+  }
+  const m2 = flat.match(/(?:Acuerdo|Auto|Prove[ií]do|Determina|Notifíc[oa]|Se\s+notifica)\s*:?\s*([^.]{25,400})/i);
+  return m2 ? m2[1].trim().replace(/\s+/g, ' ').slice(0, 520) : null;
+}
+
+function pushTerminoUniq(arr, seen, dias, accion) {
+  const d = parseInt(dias, 10);
+  accion = String(accion || '').replace(/\s+/g, ' ').trim();
+  accion = accion.replace(/^[.,:\s–-]+|[.,:\s–-]+$/g, '');
+  accion = accion.replace(/^\(?[a-záéíóúñ]\)?\s*/i, '');
+  if (d < 1 || d > 120 || accion.length < 4) return;
+  const key = d + '|' + accion.slice(0, 55).toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  arr.push({ accion: accion.slice(0, 220), dias: d, tipo: 'hábiles' });
+}
+
+function extractTerminosFromText(flat, raw) {
+  const out = [];
+  const seen = new Set();
+  const regs = [
+    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+(?:corridos\s+)?(?:para\s+|a\s+)?([^.;\n]+?)(?=\s+(?:y\s+)?\d{1,3}\s*d[ií]as|\.|;|\n|$)/gi,
+    /plazo\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:corridos\s+)?(?:para\s+|a\s+)?([^.;\n]+)/gi,
+    /término\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:para\s+|a\s+)?([^.;\n]+)/gi,
+    /dentro\s+del\s+(?:plazo|término)\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:para\s+)?([^.;\n]+)/gi,
+    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+contad[oa]s?\s+(?:para\s+)?([^.;\n]+)/gi,
+    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+siguientes\s+(?:para\s+)?([^.;\n]+)/gi,
+    /para\s+que\s+(?:dentro\s+del\s+plazo\s+de\s+)?(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*,?\s*([^.;\n]+)/gi,
+    /bajo\s+apercibimiento[^.]{0,80}\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*[.,]?\s*([^.;\n]*)/gi
+  ];
+  for (let r = 0; r < regs.length; r++) {
+    let tm;
+    const re = regs[r];
+    re.lastIndex = 0;
+    while ((tm = re.exec(flat)) !== null) {
+      pushTerminoUniq(out, seen, tm[1], tm[2]);
+    }
+  }
+  const flatCaps = flat.toUpperCase();
+  if (flatCaps.indexOf('DÍA') !== -1 && flatCaps.indexOf('HÁBIL') !== -1) {
+    const reLoose = /(\d{1,3})\s*D[IÍ]AS\s*H[AÁ]B[IÍ]?LES\s+PARA\s+([^.;\n]{6,180})/gi;
+    let tm2;
+    while ((tm2 = reLoose.exec(flat)) !== null) {
+      pushTerminoUniq(out, seen, tm2[1], tm2[2]);
+    }
+  }
+  return out;
+}
+
 function parseCedulaHeuristics(raw) {
   const flat = raw.replace(/\s+/g, ' ').trim();
   const out = {
@@ -976,8 +1096,7 @@ function parseCedulaHeuristics(raw) {
   m = flat.match(/((?:Juzgado|Tribunal|Junta|Salas?|Órgano)\s+(?:de\s+)?[^\n.]{8,100})/i);
   if (m) out.juzgado = m[1].trim().slice(0, 180);
 
-  m = flat.match(/(?:notificado\s*(?:a|:)|compareciente|parte\s+citada|ciudadano|c\s*\.\s*)\s*([A-ZÁÉÍÓÚÑ][^.;:\n]{4,90})/i);
-  if (m) out.cliente = m[1].trim().replace(/\s+$/,'');
+  out.cliente = extractClienteFromText(raw, flat);
 
   const dates = [];
   const reDMY = /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b/g;
@@ -986,18 +1105,17 @@ function parseCedulaHeuristics(raw) {
     const iso = toIsoDate(parseInt(dm[1], 10), parseInt(dm[2], 10), parseInt(dm[3], 10));
     if (iso) dates.push(iso);
   }
-  const seen = new Set();
-  const uniq = dates.filter(d => { if (seen.has(d)) return false; seen.add(d); return true; });
+  const seenDates = new Set();
+  const uniq = dates.filter(function (d) { if (seenDates.has(d)) return false; seenDates.add(d); return true; });
   if (uniq.length) {
     out.cedula_fecha = uniq[0];
     if (uniq.length > 1) out.notificacion_fecha = uniq[uniq.length - 1];
   }
 
-  m = flat.match(/(?:Acuerdo|Auto|Resoluci[oó]n|Sentencia|Determina|Notifíc[oa]|Se\s+notifica)\s*:?\s*([^.]{15,280})/i);
-  if (m) out.actuacion = m[1].trim();
+  out.actuacion = extractActuacionFromText(raw, flat);
 
   if (/demandad[ao]\b/i.test(flat)) out.posicion = 'Parte Demandada';
-  else if (/\bactora?\b|\bparte\s+actora/i.test(flat)) out.posicion = 'Parte Actora';
+  else if (/\bactora?\b|\bparte\s+actora|demandante\b/i.test(flat)) out.posicion = 'Parte Actora';
   else if (/quejoso|quejosa/i.test(flat)) out.posicion = 'Quejoso';
   else if (/tercero\s+interesado/i.test(flat)) out.posicion = 'Tercero Interesado';
   else if (/tercero\s+perjudicado/i.test(flat)) out.posicion = 'Tercero Perjudicado';
@@ -1012,16 +1130,7 @@ function parseCedulaHeuristics(raw) {
   else if (/\bpenal\b/i.test(flat)) out.materia = 'Penal';
   else if (/corporativ/i.test(flat)) out.materia = 'Corporativo';
 
-  const termRe = /(\d{1,2})\s*d[ií]as?\s*h[aá]biles?\s+(?:para\s+)?([^.;\n]+)/gi;
-  let tm;
-  while ((tm = termRe.exec(flat)) !== null) {
-    const dias = parseInt(tm[1], 10);
-    let accion = tm[2].replace(/\s+/g, ' ').trim().replace(/^\d+\s*$/, '');
-    accion = accion.replace(/^[.,;\s:–-]+/, '').replace(/[.,;\s]+$/, '');
-    if (dias >= 1 && dias <= 90 && accion.length >= 5) {
-      out.terminos.push({ accion: accion.slice(0, 200), dias: dias, tipo: 'hábiles' });
-    }
-  }
+  out.terminos = extractTerminosFromText(flat, raw);
 
   return out;
 }
@@ -1063,7 +1172,8 @@ async function analyzePDF() {
 
     renderAIResult(aiData);
     result.classList.add('show');
-    showAlert(alert, '✦ Extracción lista. Revisa los datos y presiona "Aplicar" para usarlos.', 'success');
+    applyExtractedFields(aiData, { goToStep2: true });
+    showAlert(alert, '✦ Datos aplicados al formulario y a términos (revisa el paso 2 y 3).', 'success');
   } catch (err) {
     showAlert(alert, 'Error al extraer: ' + analyzeFetchErrorMessage(err) + '. Puedes ingresar los datos manualmente en el paso 2.', 'error');
   } finally {
@@ -1108,47 +1218,52 @@ function renderAIResult(data) {
   c.innerHTML = html;
 }
 
-function applyAIData() {
-  if (!aiData) return;
-  const set = (id, val) => { if (val) document.getElementById(id).value = val; };
+function applyExtractedFields(data, opts) {
+  opts = opts || {};
+  if (!data) return;
+  const set = function (id, val) { if (val) document.getElementById(id).value = val; };
 
-  set('exp-numero', aiData.expediente);
-  set('exp-juzgado', aiData.juzgado);
-  set('exp-cliente', aiData.cliente);
-  set('cedula-fecha', aiData.cedula_fecha);
-  set('notif-fecha', aiData.notificacion_fecha);
-  set('exp-actuacion', aiData.actuacion);
+  set('exp-numero', data.expediente);
+  set('exp-juzgado', data.juzgado);
+  set('exp-cliente', data.cliente);
+  set('cedula-fecha', data.cedula_fecha);
+  set('notif-fecha', data.notificacion_fecha);
+  set('exp-actuacion', data.actuacion);
 
-  if (aiData.posicion) {
+  if (data.posicion) {
     const sel = document.getElementById('exp-posicion');
-    for (let o of sel.options) {
-      if (o.value === aiData.posicion || o.text.includes(aiData.posicion)) {
-        sel.value = o.value; break;
+    for (let o = 0; o < sel.options.length; o++) {
+      const opt = sel.options[o];
+      if (opt.value === data.posicion || opt.text.indexOf(data.posicion) !== -1) {
+        sel.value = opt.value; break;
       }
     }
   }
-  if (aiData.materia) {
+  if (data.materia) {
     const sel = document.getElementById('exp-materia');
-    for (let o of sel.options) {
-      if (o.text === aiData.materia) { sel.value = o.value; break; }
+    for (let o = 0; o < sel.options.length; o++) {
+      const opt = sel.options[o];
+      if (opt.text === data.materia) { sel.value = opt.value; break; }
     }
   }
 
-  // Apply terms
-  if (aiData.terminos && aiData.terminos.length) {
-    const inicio = aiData.notificacion_fecha || aiData.cedula_fecha;
-    if (inicio) {
-      terminos = [];
-      aiData.terminos.forEach(t => {
-        if (t.dias && t.accion) {
-          const vencimiento = addBusinessDays(inicio, t.dias);
-          terminos.push({ accion: t.accion, dias: t.dias, inicio, vencimiento });
-        }
-      });
-    }
+  const inicio = data.notificacion_fecha || data.cedula_fecha || new Date().toISOString().slice(0, 10);
+  if (data.terminos && data.terminos.length) {
+    terminos = [];
+    data.terminos.forEach(function (t) {
+      if (t && t.dias && t.accion) {
+        const vencimiento = addBusinessDays(inicio, t.dias);
+        terminos.push({ accion: t.accion, dias: t.dias, inicio: inicio, vencimiento: vencimiento });
+      }
+    });
   }
 
-  goToStep(2);
+  if (opts.goToStep2) goToStep(2);
+}
+
+function applyAIData() {
+  if (!aiData) return;
+  applyExtractedFields(aiData, { goToStep2: true });
 }
 
 // ── PREVIEW ────────────────────────────────────────────────────────────────────
