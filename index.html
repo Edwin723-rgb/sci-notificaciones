@@ -140,7 +140,9 @@
   }
   .upload-zone input[type=file] {
     position: absolute; inset: 0; opacity: 0; cursor: pointer;
-    width: 100%; height: 100%; padding: 0; border: none;
+    width: 100%; height: 100%; padding: 0; margin: 0; border: 0;
+    z-index: 5;
+    font-size: 0;
   }
   .upload-zone .upload-icon { font-size: 32px; margin-bottom: 8px; }
   .upload-zone p { font-size: 14px; color: var(--muted); }
@@ -154,6 +156,15 @@
   .file-info .fname { font-size: 13px; font-weight: 500; color: var(--navy); flex: 1; word-break: break-all; }
   .file-info .fsize { font-size: 11px; color: var(--muted); }
   .remove-file { cursor: pointer; color: var(--red); font-size: 18px; line-height: 1; padding: 2px 5px; }
+
+  .upload-fallback {
+    width: 100%; margin-top: 10px; padding: 11px 14px;
+    background: var(--cream2); color: var(--navy);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background .2s, border-color .2s;
+  }
+  .upload-fallback:hover { background: #fff; border-color: var(--gold); }
 
   /* AI ANALYSIS */
   .ai-btn {
@@ -364,11 +375,14 @@
         Cargar Cédula de Notificación
       </div>
       <div class="upload-zone" id="upload-zone">
-        <input type="file" id="pdf-input" accept=".pdf,image/*">
         <div class="upload-icon">📂</div>
-        <p><strong>Arrastra el PDF aquí</strong> o haz clic para seleccionar</p>
+        <p><strong>Arrastra el PDF aquí</strong> o haz clic en esta zona</p>
         <p style="margin-top:6px;font-size:12px;">PDF o imagen · Cédula de notificación judicial</p>
+        <input type="file" id="pdf-input" accept=".pdf,application/pdf,image/*" title="Elegir PDF o imagen">
       </div>
+      <button type="button" class="upload-fallback" id="pick-file-btn">
+        Elegir archivo desde mi equipo…
+      </button>
       <div class="file-info" id="file-info">
         <span style="font-size:20px">📋</span>
         <span class="fname" id="fname-label"></span>
@@ -824,17 +838,40 @@ document.getElementById('pdf-input').addEventListener('change', function(e) {
   handleFile(file);
 });
 
-const zone = document.getElementById('upload-zone');
-zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
-zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
-zone.addEventListener('drop', e => {
-  e.preventDefault(); zone.classList.remove('dragover');
-  const file = e.dataTransfer.files[0];
-  if (file) handleFile(file);
+document.getElementById('pick-file-btn').addEventListener('click', function () {
+  document.getElementById('pdf-input').click();
 });
+
+const zone = document.getElementById('upload-zone');
+zone.addEventListener('dragenter', function (e) {
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
+zone.addEventListener('dragover', function (e) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  zone.classList.add('dragover');
+}, true);
+zone.addEventListener('dragleave', function (e) {
+  if (!zone.contains(e.relatedTarget)) zone.classList.remove('dragover');
+}, true);
+zone.addEventListener('drop', function (e) {
+  e.preventDefault();
+  e.stopPropagation();
+  zone.classList.remove('dragover');
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) handleFile(f);
+}, true);
 
 function handleFile(file) {
   pdfFile = file;
+  try {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    document.getElementById('pdf-input').files = dt.files;
+  } catch (ignore) {}
+
   document.getElementById('fname-label').textContent = file.name;
   document.getElementById('fsize-label').textContent = (file.size/1024).toFixed(1) + ' KB';
   document.getElementById('file-info').classList.add('show');
