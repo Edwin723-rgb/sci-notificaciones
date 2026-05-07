@@ -507,36 +507,12 @@
         <div class="icon">📅</div>
         Términos y Plazos
       </div>
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
-        Los términos se calculan contando solo <strong>días hábiles</strong>, excluyendo sábados, domingos y días inhábiles del calendario SCJN 2026.
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+        Los plazos se obtienen del texto de la cédula (paso 1) y los <strong>vencimientos se calculan solos</strong> con <strong>días hábiles</strong> (calendario SCJN 2026), usando la <strong>fecha de notificación</strong> del paso 2; si no está, la <strong>fecha de la cédula</strong>.
       </p>
+      <p id="terminos-computo-hint" style="font-size:12px;color:var(--navy);margin-bottom:14px;padding:10px 12px;background:var(--cream2);border-radius:8px;border-left:3px solid var(--gold);"></p>
       <div id="terminos-list"></div>
       <div class="alert" id="term-alert"></div>
-
-      <button class="ai-btn secondary" onclick="toggleAddTerm()" style="margin-top:8px">
-        + Agregar término
-      </button>
-
-      <div class="add-term-form" id="add-term-form">
-        <div class="add-term-row">
-          <div class="field">
-            <label>Acción requerida</label>
-            <input type="text" id="new-term-accion" placeholder="Ej. Presentar contestación de demanda">
-          </div>
-          <div class="field">
-            <label>Días hábiles</label>
-            <input type="number" id="new-term-dias" min="1" max="90" placeholder="5">
-          </div>
-          <div class="field">
-            <label>Fecha inicio cómputo</label>
-            <input type="date" id="new-term-inicio">
-          </div>
-        </div>
-        <div class="nav-btns" style="margin-top:12px">
-          <button class="ai-btn secondary" onclick="toggleAddTerm()">Cancelar</button>
-          <button class="ai-btn" onclick="addTermino()">Agregar</button>
-        </div>
-      </div>
     </div>
 
     <!-- DÍAS INHÁBILES 2026 -->
@@ -629,6 +605,8 @@ let pdfFile = null;
 let pdfBase64 = null;
 let aiData = null;
 let terminos = [];
+/** Plazos detectados en el texto ({ días, acción }); el vencimiento se deriva de las fechas del paso 2. */
+let terminosPlantilla = [];
 
 // ── DÍAS INHÁBILES SCJN 2026 ───────────────────────────────────────────────────
 const INHABILES_2026_RAW = [
@@ -750,26 +728,75 @@ function selectAll(val) {
 }
 
 // ── TÉRMINOS ───────────────────────────────────────────────────────────────────
+function resolverInicioComputo() {
+  const n = document.getElementById('notif-fecha').value;
+  const c = document.getElementById('cedula-fecha').value;
+  if (n) return { inicio: n, etiqueta: 'fecha de notificación', pref: 'notificacion' };
+  if (c) return { inicio: c, etiqueta: 'fecha de la cédula', pref: 'cedula' };
+  return { inicio: '', etiqueta: '', pref: '' };
+}
+
+function actualizarHintComputoTerminos() {
+  const el = document.getElementById('terminos-computo-hint');
+  if (!el) return;
+  const { inicio, etiqueta, pref } = resolverInicioComputo();
+  if (!terminosPlantilla.length) {
+    el.innerHTML = 'Los plazos (días hábiles y acción) se detectan al <strong>extraer la cédula</strong> en el paso 1. Si no aparece ninguno, el documento no suele traer un plazo explícito.';
+    return;
+  }
+  if (!inicio) {
+    el.innerHTML = 'Completa en el <strong>paso 2</strong> la <strong>fecha de notificación</strong> (se usa primero para el cómputo) y, si aplica, la <strong>fecha de la cédula</strong>. Sin al menos una fecha no se puede calcular el vencimiento.';
+    return;
+  }
+  let extra = '';
+  if (pref === 'cedula') {
+    extra = ' Cuando tengas la fecha en que se notificó personalmente, colócala en el paso 2 para recalcular desde esa fecha.';
+  }
+  el.innerHTML = `Vencimientos con <strong>días hábiles</strong> desde la <strong>${etiqueta}</strong> (${formatDate(inicio)}).` + extra;
+}
+
+/** Reconstruye <code>terminos</code> a partir de la plantilla extraída y las fechas del formulario. */
+function recalcularTerminosPlazos() {
+  const { inicio, pref } = resolverInicioComputo();
+  terminos = [];
+  if (inicio && terminosPlantilla.length) {
+    terminosPlantilla.forEach(function (t) {
+      if (!t || !t.dias || !t.accion) return;
+      terminos.push({
+        accion: t.accion,
+        dias: t.dias,
+        inicio: inicio,
+        vencimiento: addBusinessDays(inicio, t.dias),
+        computoDesde: pref
+      });
+    });
+  }
+  renderTerminos();
+  actualizarHintComputoTerminos();
+}
+
 function renderTerminos() {
   const list = document.getElementById('terminos-list');
+  const { inicio } = resolverInicioComputo();
   if (!terminos.length) {
-    list.innerHTML = `<p style="font-size:13px;color:var(--muted);padding:12px 0">
-      Aún no hay términos registrados. Agrega el primero con el botón de abajo, o extráelos del texto en el paso 1.
-    </p>`;
+    let msg = 'Aún no hay plazos calculados.';
+    if (!terminosPlantilla.length) msg = 'No se detectaron plazos en el texto. Extrae de nuevo la cédula en el paso 1 o revisa que el PDF tenga texto legible.';
+    else if (!inicio) msg = 'Hay plazos detectados; indica al menos una fecha en el paso 2 (notificación o cédula) para ver vencimientos.';
+    list.innerHTML = `<p style="font-size:13px;color:var(--muted);padding:12px 0">${msg}</p>`;
     return;
   }
   list.innerHTML = terminos.map((t, i) => {
     const diasR = diasRestantes(t.vencimiento);
     const urg = urgenciaLabel(diasR);
     return `<div class="termino-item ${urg.cls}">
-      <button class="remove-termino" onclick="removeTermino(${i})" title="Eliminar">✕</button>
+      <button class="remove-termino" onclick="removeTermino(${i})" title="Quitar este plazo de la lista">✕</button>
       <div class="t-header">
         <span class="t-accion">${t.accion}</span>
         <span class="badge ${urg.cls}">${urg.txt}</span>
       </div>
       <div class="termino-dates">
         <span><strong>${t.dias} días hábiles</strong></span>
-        <span>Inicia: <strong>${formatDate(t.inicio)}</strong></span>
+        <span>Inicia cómputo: <strong>${formatDate(t.inicio)}</strong></span>
         <span>Vence: <strong>${formatDate(t.vencimiento)}</strong></span>
       </div>
     </div>`;
@@ -777,38 +804,8 @@ function renderTerminos() {
 }
 
 function removeTermino(i) {
-  terminos.splice(i, 1);
-  renderTerminos();
-}
-
-function toggleAddTerm() {
-  const f = document.getElementById('add-term-form');
-  f.classList.toggle('show');
-  if (f.classList.contains('show')) {
-    const notifFecha = document.getElementById('notif-fecha').value;
-    if (notifFecha) document.getElementById('new-term-inicio').value = notifFecha;
-  }
-}
-
-function addTermino() {
-  const accion = document.getElementById('new-term-accion').value.trim();
-  const diasStr = document.getElementById('new-term-dias').value;
-  const inicio = document.getElementById('new-term-inicio').value;
-  const alert = document.getElementById('term-alert');
-
-  if (!accion || !diasStr || !inicio) {
-    showAlert(alert, 'Por favor completa todos los campos del término.', 'error');
-    return;
-  }
-  const dias = parseInt(diasStr);
-  const vencimiento = addBusinessDays(inicio, dias);
-  terminos.push({ accion, dias, inicio, vencimiento });
-  renderTerminos();
-
-  document.getElementById('new-term-accion').value = '';
-  document.getElementById('new-term-dias').value = '';
-  toggleAddTerm();
-  alert.classList.remove('show');
+  if (terminosPlantilla.length > i) terminosPlantilla.splice(i, 1);
+  recalcularTerminosPlazos();
 }
 
 // ── DÍAS INHÁBILES TABLE ────────────────────────────────────────────────────────
@@ -1371,7 +1368,7 @@ function renderAIResult(data) {
       </div>`;
     });
   } else {
-    html += `<p style="font-size:12px;color:var(--muted);margin-top:8px">No se detectaron términos explícitos. Puedes agregarlos manualmente en el paso 3.</p>`;
+    html += `<p style="font-size:12px;color:var(--muted);margin-top:8px">No se detectaron plazos explícitos en el texto. Si el auto impone un término, revisa el PDF o las fechas del paso 2.</p>`;
   }
 
   c.innerHTML = html;
@@ -1406,16 +1403,15 @@ function applyExtractedFields(data, opts) {
     }
   }
 
-  const inicio = data.notificacion_fecha || data.cedula_fecha || new Date().toISOString().slice(0, 10);
+  terminosPlantilla = [];
   if (data.terminos && data.terminos.length) {
-    terminos = [];
     data.terminos.forEach(function (t) {
       if (t && t.dias && t.accion) {
-        const vencimiento = addBusinessDays(inicio, t.dias);
-        terminos.push({ accion: t.accion, dias: t.dias, inicio: inicio, vencimiento: vencimiento });
+        terminosPlantilla.push({ accion: t.accion, dias: t.dias });
       }
     });
   }
+  recalcularTerminosPlazos();
 
   if (opts.goToStep2) goToStep(2);
 }
@@ -1602,7 +1598,7 @@ function goToStep(n) {
   currentStep = n;
   window.scrollTo({top:0, behavior:'smooth'});
 
-  if (n === 3) renderTerminos();
+  if (n === 3) recalcularTerminosPlazos();
   if (n === 4) renderRecipients();
 }
 
@@ -1615,8 +1611,11 @@ function showAlert(el, msg, type) {
 
 // ── INIT ───────────────────────────────────────────────────────────────────────
 renderInhabilesTable();
-renderTerminos();
+recalcularTerminosPlazos();
 renderRecipients();
+
+document.getElementById('cedula-fecha').addEventListener('change', recalcularTerminosPlazos);
+document.getElementById('notif-fecha').addEventListener('change', recalcularTerminosPlazos);
 </script>
 </body>
 </html>
