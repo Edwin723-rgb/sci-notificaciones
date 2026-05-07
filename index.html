@@ -377,15 +377,15 @@
       </div>
 
       <button class="ai-btn" id="analyze-btn" onclick="analyzePDF()" disabled>
-        <span>✦</span> Analizar cédula con IA
+        <span>✦</span> Extraer datos de la cédula
       </button>
       <div class="loader" id="ai-loader">
         <div class="spinner"></div>
-        Analizando la cédula… esto puede tardar unos segundos
+        Extrayendo texto del documento… en imágenes u OCR puede tardar un poco
       </div>
       <div class="alert" id="ai-alert"></div>
       <div class="ai-result" id="ai-result">
-        <h4>Datos extraídos de la cédula</h4>
+        <h4>Datos detectados en el documento</h4>
         <div id="ai-result-content"></div>
         <button class="ai-btn secondary" style="margin-top:12px" onclick="applyAIData()">
           ✓ Aplicar datos al formulario
@@ -405,7 +405,7 @@
         Datos del Expediente
       </div>
       <div class="alert info show" id="info-manual">
-        💡 Puedes llenar estos datos manualmente o aplicar los extraídos por IA en el paso anterior.
+        💡 Puedes llenar estos datos manualmente o aplicar los extraídos en el paso anterior.
       </div>
       <div class="form-grid">
         <div class="field">
@@ -737,7 +737,7 @@ function renderTerminos() {
   const list = document.getElementById('terminos-list');
   if (!terminos.length) {
     list.innerHTML = `<p style="font-size:13px;color:var(--muted);padding:12px 0">
-      Aún no hay términos registrados. Agrega el primero con el botón de abajo, o extráelos de la cédula con la IA.
+      Aún no hay términos registrados. Agrega el primero con el botón de abajo, o extráelos del texto en el paso 1.
     </p>`;
     return;
   }
@@ -852,77 +852,190 @@ function removeFile() {
   document.getElementById('ai-result').classList.remove('show');
 }
 
-// ── AI ANALYSIS ────────────────────────────────────────────────────────────────
-const ANTHROPIC_MODEL_ID = 'claude-sonnet-4-20250514';
+// ── EXTRACCIÓN DE TEXTO (PDF.js + Tesseract en el navegador, sin servidor ni IA) ─
+const PDFJS_VERSION = '3.11.174';
+const PDFJS_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/' + PDFJS_VERSION;
 
-/** Misma instancia en Vercel, o producción si abres el HTML por file:// */
-function anthropicMessagesEndpoint() {
-  if (location.protocol === 'https:' || location.protocol === 'http:') {
-    return location.origin + '/api/messages';
-  }
-  return 'https://sci-notificaciones.vercel.app/api/messages';
-}
-
-function messagesApiHeaders() {
-  return { 'Content-Type': 'application/json' };
-}
-
-/** Quita cercos tipo ```json … ``` y localiza el primer objeto JSON balanceado. */
-function extractFirstJsonObject(str) {
-  const start = str.indexOf('{');
-  if (start === -1) return str.trim();
-  let depth = 0;
-  for (let i = start; i < str.length; i++) {
-    const ch = str[i];
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) return str.slice(start, i + 1);
+function loadScriptById(id, src, isReady) {
+  return new Promise((resolve, reject) => {
+    if (isReady()) return resolve();
+    const existing = document.querySelector('script[data-loadid="' + id + '"]');
+    if (existing) {
+      const tryResolve = () => {
+        if (isReady()) resolve();
+      };
+      if (existing.getAttribute('data-loaded')) {
+        if (isReady()) resolve();
+        else reject(new Error('Librería no disponible: ' + id));
+        return;
+      }
+      existing.addEventListener('load', () => {
+        existing.setAttribute('data-loaded', '1');
+        if (isReady()) resolve();
+        else reject(new Error('Librería no disponible: ' + id));
+      });
+      existing.addEventListener('error', () => reject(new Error('No se pudo cargar: ' + src)));
+      setTimeout(tryResolve, 0);
+      return;
     }
-  }
-  return str.slice(start).trim();
+    const s = document.createElement('script');
+    s.src = src;
+    s.setAttribute('data-loadid', id);
+    s.onload = () => {
+      s.setAttribute('data-loaded', '1');
+      isReady() ? resolve() : reject(new Error('Librería no disponible: ' + id));
+    };
+    s.onerror = () => reject(new Error('No se pudo cargar: ' + src));
+    document.head.appendChild(s);
+  });
 }
 
-function normalizeAiJsonString(s) {
-  if (s == null) return '';
-  let t = String(s).trim();
-  t = t.replace(/^\uFEFF/, '');
-  t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-  t = t.replace(/```(?:json)?/gi, '').replace(/```/g, '');
-  return t.trim();
+function ensurePdfJs() {
+  return loadScriptById('pdfjs', PDFJS_BASE + '/pdf.min.js', function () {
+    return !!window.pdfjsLib;
+  }).then(() => {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_BASE + '/pdf.worker.min.js';
+  });
+}
+
+function ensureTesseract() {
+  return loadScriptById('tesseract', 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js', function () {
+    return !!window.Tesseract;
+  });
+}
+
+async function extractTextFromPdfFile(file) {
+  await ensurePdfJs();
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let full = '';
+  const n = Math.min(pdf.numPages, 8);
+  for (let i = 1; i <= n; i++) {
+    const page = await pdf.getPage(i);
+    const tc = await page.getTextContent();
+    full += tc.items.map(function (it) { return it.str; }).join(' ') + '\n';
+  }
+  const collapsed = full.replace(/\s+/g, ' ').trim();
+  if (collapsed.length < 100 && pdf.numPages >= 1) {
+    await ensureTesseract();
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+    const worker = await Tesseract.createWorker('spa');
+    const r = await worker.recognize(canvas);
+    await worker.terminate();
+    const ocrText = r && r.data && r.data.text ? r.data.text.trim() : '';
+    if (ocrText.length > collapsed.length) full = ocrText + '\n' + full;
+  }
+  return full;
+}
+
+async function extractTextFromImageFile(file) {
+  await ensureTesseract();
+  const worker = await Tesseract.createWorker('spa');
+  const r = await worker.recognize(file);
+  await worker.terminate();
+  return r && r.data && r.data.text ? r.data.text : '';
+}
+
+/** Convierte fecha detectada a YYYY-MM-DD (heurística día/mes para México). */
+function toIsoDate(d, m, y) {
+  if (y < 100) y += 2000;
+  if (m > 12 && d <= 12) { const t = d; d = m; m = t; }
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
 }
 
 /**
- * Interpreta el texto devuelto por la IA (el cliente llama a /api/messages; la clave vive solo en Vercel).
- * @returns {{ ok: true, data: object } | { ok: false, message: string }}
+ * Reglas simples sobre el texto plano (similar a lo que harías con markitdown+tesseract local).
  */
-function parseAIAssistantJson(rawText) {
-  if (rawText == null || (typeof rawText === 'string' && !rawText.trim())) {
-    return { ok: false, message: 'La IA no devolvió contenido reconocible' };
+function parseCedulaHeuristics(raw) {
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  const out = {
+    expediente: null,
+    juzgado: null,
+    cliente: null,
+    posicion: null,
+    cedula_fecha: null,
+    notificacion_fecha: null,
+    actuacion: null,
+    materia: null,
+    terminos: []
+  };
+  if (!flat) return out;
+
+  let m = flat.match(/expediente\s*:?\s*N[°º#.\s]*([A-Z0-9\-\/\.]+)/i);
+  if (!m) m = flat.match(/\bN[°º#.\s]*Exp\.?\s*:?\s*([A-Z0-9\-\/\.]+)/i);
+  if (!m) m = flat.match(/\b(\d{1,5}\/\d{4}(?:[-–][\w\d]+)?)\b/);
+  if (m) out.expediente = m[1].trim();
+
+  m = flat.match(/((?:Juzgado|Tribunal|Junta|Salas?|Órgano)\s+(?:de\s+)?[^\n.]{8,100})/i);
+  if (m) out.juzgado = m[1].trim().slice(0, 180);
+
+  m = flat.match(/(?:notificado\s*(?:a|:)|compareciente|parte\s+citada|ciudadano|c\s*\.\s*)\s*([A-ZÁÉÍÓÚÑ][^.;:\n]{4,90})/i);
+  if (m) out.cliente = m[1].trim().replace(/\s+$/,'');
+
+  const dates = [];
+  const reDMY = /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b/g;
+  let dm;
+  while ((dm = reDMY.exec(flat)) !== null) {
+    const iso = toIsoDate(parseInt(dm[1], 10), parseInt(dm[2], 10), parseInt(dm[3], 10));
+    if (iso) dates.push(iso);
   }
-  let candidate = normalizeAiJsonString(rawText);
-  candidate = extractFirstJsonObject(candidate);
-  try {
-    const data = JSON.parse(candidate);
-    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
-      return { ok: false, message: 'La IA devolvió un formato inesperado (no es un objeto JSON)' };
+  const seen = new Set();
+  const uniq = dates.filter(d => { if (seen.has(d)) return false; seen.add(d); return true; });
+  if (uniq.length) {
+    out.cedula_fecha = uniq[0];
+    if (uniq.length > 1) out.notificacion_fecha = uniq[uniq.length - 1];
+  }
+
+  m = flat.match(/(?:Acuerdo|Auto|Resoluci[oó]n|Sentencia|Determina|Notifíc[oa]|Se\s+notifica)\s*:?\s*([^.]{15,280})/i);
+  if (m) out.actuacion = m[1].trim();
+
+  if (/demandad[ao]\b/i.test(flat)) out.posicion = 'Parte Demandada';
+  else if (/\bactora?\b|\bparte\s+actora/i.test(flat)) out.posicion = 'Parte Actora';
+  else if (/quejoso|quejosa/i.test(flat)) out.posicion = 'Quejoso';
+  else if (/tercero\s+interesado/i.test(flat)) out.posicion = 'Tercero Interesado';
+  else if (/tercero\s+perjudicado/i.test(flat)) out.posicion = 'Tercero Perjudicado';
+  else if (/autoridad\s+responsable/i.test(flat)) out.posicion = 'Autoridad Responsable';
+
+  if (/amparo/i.test(flat)) out.materia = 'Amparo';
+  else if (/\blaboral\b/i.test(flat)) out.materia = 'Laboral';
+  else if (/\bcivil\b/i.test(flat)) out.materia = 'Civil';
+  else if (/mercantil/i.test(flat)) out.materia = 'Mercantil';
+  else if (/administrativ/i.test(flat)) out.materia = 'Administrativo';
+  else if (/familiar/i.test(flat)) out.materia = 'Familiar';
+  else if (/\bpenal\b/i.test(flat)) out.materia = 'Penal';
+  else if (/corporativ/i.test(flat)) out.materia = 'Corporativo';
+
+  const termRe = /(\d{1,2})\s*d[ií]as?\s*h[aá]biles?\s+(?:para\s+)?([^.;\n]+)/gi;
+  let tm;
+  while ((tm = termRe.exec(flat)) !== null) {
+    const dias = parseInt(tm[1], 10);
+    let accion = tm[2].replace(/\s+/g, ' ').trim().replace(/^\d+\s*$/, '');
+    accion = accion.replace(/^[.,;\s:–-]+/, '').replace(/[.,;\s]+$/, '');
+    if (dias >= 1 && dias <= 90 && accion.length >= 5) {
+      out.terminos.push({ accion: accion.slice(0, 200), dias: dias, tipo: 'hábiles' });
     }
-    return { ok: true, data };
-  } catch (e) {
-    return { ok: false, message: 'No se pudo leer el JSON de la IA (respuesta incompleta o con texto extra)' };
   }
+
+  return out;
 }
 
 function analyzeFetchErrorMessage(err) {
   const msg = err && err.message ? String(err.message) : 'Error desconocido';
   if (msg === 'Failed to fetch' || /NetworkError|Failed to load|Load failed|network/i.test(msg)) {
-    return 'No se pudo conectar con la API (Failed to fetch). Abre la app desde HTTPS (p. ej. la URL de Vercel), no uses file://';
+    return 'No se pudo cargar una librería (red). Comprueba tu conexión e intenta de nuevo.';
   }
   return msg;
 }
 
 async function analyzePDF() {
-  if (!pdfBase64) return;
+  if (!pdfFile) return;
   const btn = document.getElementById('analyze-btn');
   const loader = document.getElementById('ai-loader');
   const alert = document.getElementById('ai-alert');
@@ -933,87 +1046,26 @@ async function analyzePDF() {
   result.classList.remove('show');
   alert.classList.remove('show');
 
-  const isImage = pdfFile.type.startsWith('image/');
-  const mediaType = isImage ? pdfFile.type : 'application/pdf';
-
-  const systemPrompt = `Eres un asistente jurídico especializado en derecho mexicano. 
-Analiza la cédula de notificación judicial y extrae los datos en formato JSON puro, sin texto adicional, sin backticks.
-El JSON debe tener exactamente esta estructura:
-{
-  "expediente": "número de expediente",
-  "juzgado": "nombre del juzgado o tribunal",
-  "cliente": "nombre de la parte notificada (a quien va dirigida la cédula)",
-  "posicion": "Parte Actora|Parte Demandada|Tercero Interesado|Tercero Perjudicado|Quejoso|Autoridad Responsable",
-  "cedula_fecha": "YYYY-MM-DD o null",
-  "notificacion_fecha": "YYYY-MM-DD o null",
-  "actuacion": "descripción breve del acuerdo o resolución notificada",
-  "materia": "Amparo|Civil|Laboral|Mercantil|Administrativo|Familiar|Penal|Corporativo o null",
-  "terminos": [
-    {
-      "accion": "descripción de lo que se solicita",
-      "dias": numero_de_dias_habiles,
-      "tipo": "hábiles"
-    }
-  ]
-}
-Si no encuentras un dato, usa null. Para términos, solo incluye los que estén EXPLÍCITAMENTE mencionados en el documento con plazo específico. Si no hay términos explícitos, usa array vacío.`;
-
   try {
-    const msgContent = [
-      {
-        type: isImage ? 'image' : 'document',
-        source: { type: 'base64', media_type: mediaType, data: pdfBase64 }
-      },
-      { type: 'text', text: 'Analiza esta cédula de notificación y extrae los datos en el formato JSON indicado.' }
-    ];
-
-    const response = await fetch(anthropicMessagesEndpoint(), {
-      method: 'POST',
-      headers: messagesApiHeaders(),
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL_ID,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: msgContent }]
-      })
-    });
-
-    const responseText = await response.text();
-    let data;
-    try {
-      data = responseText ? JSON.parse(responseText) : {};
-    } catch (parseErr) {
-      throw new Error('Respuesta no válida del servicio de IA.');
+    let rawText = '';
+    if (pdfFile.type.startsWith('image/')) {
+      rawText = await extractTextFromImageFile(pdfFile);
+    } else {
+      rawText = await extractTextFromPdfFile(pdfFile);
     }
 
-    if (!response.ok) {
-      const apiErr = data && data.error && data.error.message ? data.error.message : `HTTP ${response.status}`;
-      throw new Error(apiErr);
+    const t = rawText.replace(/\s+/g, ' ').trim();
+    if (t.length < 15) {
+      throw new Error('No se obtuvo texto suficiente. Prueba una imagen más nítida, mayor resolución, o un PDF con texto seleccionable.');
     }
 
-    if (data.error && data.error.message) {
-      throw new Error(data.error.message);
-    }
-
-    const blocks = Array.isArray(data.content) ? data.content : [];
-    const raw = blocks
-      .filter(function (b) { return b && b.type === 'text'; })
-      .map(function (b) { return b.text != null ? String(b.text) : ''; })
-      .join('');
-
-    const parsed = parseAIAssistantJson(raw);
-    if (!parsed.ok) {
-      throw new Error(parsed.message);
-    }
-
-    aiData = parsed.data;
+    aiData = parseCedulaHeuristics(rawText);
 
     renderAIResult(aiData);
     result.classList.add('show');
-    showAlert(alert, '✦ Análisis completado. Revisa los datos y presiona "Aplicar" para usarlos.', 'success');
-
+    showAlert(alert, '✦ Extracción lista. Revisa los datos y presiona "Aplicar" para usarlos.', 'success');
   } catch (err) {
-    showAlert(alert, 'Error al analizar: ' + analyzeFetchErrorMessage(err) + '. Puedes ingresar los datos manualmente en el paso 2.', 'error');
+    showAlert(alert, 'Error al extraer: ' + analyzeFetchErrorMessage(err) + '. Puedes ingresar los datos manualmente en el paso 2.', 'error');
   } finally {
     loader.classList.remove('show');
     btn.disabled = false;
