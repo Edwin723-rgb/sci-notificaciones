@@ -334,15 +334,58 @@
 
   .section-page { display: none; }
   .section-page.active { display: block; }
+
+  /* LOGIN (Google) */
+  .login-gate {
+    position: fixed; inset: 0; z-index: 10000;
+    background: rgba(15, 28, 46, 0.93);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .login-gate.hidden { display: none; }
+  .login-card {
+    background: var(--cream); border-radius: 12px; padding: 32px 28px;
+    max-width: 440px; width: 100%; border: 2px solid var(--gold);
+    box-shadow: var(--shadow);
+  }
+  .login-card h2 { font-family: 'Playfair Display', serif; color: var(--navy); margin-bottom: 10px; font-size: 22px; }
+  .login-card p { font-size: 13px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+  .login-error { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 1.2em; }
+  .login-hint { font-size: 11px; color: var(--muted); margin-top: 16px; line-height: 1.45; }
+  header .header-inner { flex: 1; min-width: 0; }
+  #header-session {
+    margin-left: auto; display: none; align-items: center; gap: 10px;
+    flex-wrap: wrap; justify-content: flex-end;
+  }
+  #header-session.show { display: flex; }
+  #header-user-email { font-size: 12px; color: var(--gold-light); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 </style>
 </head>
 <body>
 
-<header>
+<div id="login-gate" class="login-gate" aria-live="polite">
+  <div class="login-card">
+    <h2>Acceso al sistema</h2>
+    <p>Inicia sesión con la cuenta Google autorizada del despacho. El envío de notificaciones saldrá desde tu Gmail.</p>
+    <button type="button" class="ai-btn" id="btn-google-login" style="width:100%">Iniciar sesión con Google</button>
+    <p id="login-error" class="login-error"></p>
+    <p class="login-hint">
+      Configura tu <strong>Client ID OAuth</strong> en la variable <code>window.__SCI_GOOGLE_CLIENT_ID__</code> (script al final de la página).
+      En Google Cloud: APIs → Gmail API; Credenciales → ID de cliente OAuth &quot;Aplicación web&quot;; orígenes: tu dominio Vercel y <code>http://localhost</code>.
+      Prueba: usuarios de prueba si la app está en modo prueba.
+    </p>
+  </div>
+</div>
+
+<header style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
   <div class="logo-mark">SCI</div>
-  <div>
+  <div class="header-inner">
     <h1>Registro de Notificaciones</h1>
     <span>SCI Despacho Jurídico · Villahermosa, Tabasco</span>
+  </div>
+  <div id="header-session">
+    <span id="header-user-email"></span>
+    <button type="button" class="ai-btn secondary" style="padding:8px 14px;font-size:12px" onclick="logoutGoogle()">Cerrar sesión</button>
   </div>
 </header>
 
@@ -580,27 +623,44 @@
         <div class="preview-email-header">
           <div class="email-row"><span>Para:</span> <span id="prev-to"></span></div>
           <div class="email-row"><span>Asunto:</span> <span id="prev-subject"></span></div>
-          <div class="email-row"><span>De:</span> SCI Despacho Jurídico</div>
+          <div class="email-row"><span>De:</span> <span id="prev-from">—</span></div>
         </div>
         <div class="preview-email-body">
           <div id="prev-body-html"></div>
         </div>
       </div>
     </div>
-    <div class="nav-btns">
+    <div class="nav-btns" style="flex-wrap:wrap">
       <button class="ai-btn secondary" onclick="goToStep(4)">← Editar</button>
-      <button class="ai-btn gold" onclick="sendEmail()" style="font-size:15px">
-        📤 Abrir correo para enviar
+      <button class="ai-btn gold" onclick="sendEmail()" id="btn-send-gmail" style="font-size:15px">
+        📤 Enviar con Gmail
+      </button>
+      <button type="button" class="ai-btn secondary" onclick="sendEmailMailtoFallback()" style="font-size:13px" title="Si Gmail API no está configurado o falla">
+        Abrir en cliente de correo…
       </button>
     </div>
     <div class="alert success" id="sent-alert" style="margin-top:16px">
-      ✅ Se abrió tu cliente de correo con el mensaje listo. Recuerda adjuntar el PDF de la cédula manualmente.
+      ✅ Correo enviado desde tu cuenta Gmail.
+    </div>
+    <div class="alert info" id="sent-alert-mailto" style="margin-top:8px">
+      Se abrió tu cliente de correo. Si usas esta opción, adjunta el PDF de la cédula manualmente si hace falta.
     </div>
   </div>
 
 </div>
 
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
+// ── OAuth / Gmail (configura tu Client ID de tipo "Aplicación web" en Google Cloud Console) ──
+window.__SCI_GOOGLE_CLIENT_ID__ = window.__SCI_GOOGLE_CLIENT_ID__ || ''; /* Pega aquí tu ID de cliente OAuth: 'xxxx.apps.googleusercontent.com' */
+
+/** Solo estas cuentas Google pueden usar la app (Gmail o Workspace). Edita si algún correo distinto. */
+const ALLOWED_LOGIN_EMAILS = new Set([
+  'edwinmmoralesg@gmail.com',
+  'alejandra@solucionescorporativas.mx',
+  'ingrid@solucionescorporativas.mx'
+]);
+
 // ── ESTADO GLOBAL ──────────────────────────────────────────────────────────────
 let currentStep = 1;
 let pdfFile = null;
@@ -686,6 +746,236 @@ function urgenciaLabel(dias) {
   if (dias <= 2) return {cls:'urgente', txt:`${dias}d — URGENTE`};
   if (dias <= 5) return {cls:'moderado', txt:`${dias}d — Próximo`};
   return {cls:'normal', txt:`${dias}d`};
+}
+
+// ── GOOGLE LOGIN + Gmail API ─────────────────────────────────────────────────
+const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email';
+let tokenClient = null;
+let gmailAccessToken = null;
+
+function getGoogleClientId() {
+  const v = window.__SCI_GOOGLE_CLIENT_ID__;
+  return typeof v === 'string' && v.trim() ? v.trim() : '';
+}
+
+function showLoginGate() {
+  const g = document.getElementById('login-gate');
+  if (g) g.classList.remove('hidden');
+}
+
+function hideLoginGate() {
+  const g = document.getElementById('login-gate');
+  if (g) g.classList.add('hidden');
+}
+
+function updateSessionHeader() {
+  const em = sessionStorage.getItem('sci_user_email');
+  const hs = document.getElementById('header-session');
+  const hel = document.getElementById('header-user-email');
+  if (em && hs && hel) {
+    hel.textContent = em;
+    hs.classList.add('show');
+  } else if (hs) {
+    hs.classList.remove('show');
+  }
+}
+
+function logoutGoogle() {
+  sessionStorage.removeItem('sci_access_token');
+  sessionStorage.removeItem('sci_token_exp');
+  sessionStorage.removeItem('sci_user_email');
+  gmailAccessToken = null;
+  updateSessionHeader();
+  showLoginGate();
+  document.getElementById('login-error').textContent = '';
+}
+
+async function fetchUserEmail(accessToken) {
+  const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: 'Bearer ' + accessToken }
+  });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return (j.email || '').toLowerCase();
+}
+
+function initGoogleTokenClient() {
+  const cid = getGoogleClientId();
+  if (!cid || !window.google || !google.accounts || !google.accounts.oauth2) return;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: cid,
+    scope: GMAIL_SCOPES,
+    callback: function () {}
+  });
+}
+
+function tryRestoreSession() {
+  const exp = parseInt(sessionStorage.getItem('sci_token_exp'), 10);
+  const tok = sessionStorage.getItem('sci_access_token');
+  const em = sessionStorage.getItem('sci_user_email');
+  if (!tok || !em || exp < Date.now() + 30000) {
+    if (tok || em) {
+      sessionStorage.removeItem('sci_access_token');
+      sessionStorage.removeItem('sci_token_exp');
+      sessionStorage.removeItem('sci_user_email');
+    }
+    gmailAccessToken = null;
+    return false;
+  }
+  gmailAccessToken = tok;
+  updateSessionHeader();
+  hideLoginGate();
+  return true;
+}
+
+function startGoogleLogin() {
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  const cid = getGoogleClientId();
+  if (!cid) {
+    errEl.textContent = 'Configura window.__SCI_GOOGLE_CLIENT_ID__ con tu Client ID OAuth (Google Cloud).';
+    return;
+  }
+  if (!tokenClient) initGoogleTokenClient();
+  if (!tokenClient) {
+    errEl.textContent = 'Carga la librería de Google (recarga la página).';
+    return;
+  }
+  tokenClient.callback = async function (resp) {
+    if (resp.error) {
+      errEl.textContent = resp.error || 'No se pudo iniciar sesión.';
+      return;
+    }
+    const accessToken = resp.access_token;
+    if (!accessToken) {
+      errEl.textContent = 'No se recibió token de acceso.';
+      return;
+    }
+    let email = '';
+    try {
+      email = await fetchUserEmail(accessToken);
+    } catch (e) {
+      errEl.textContent = 'No se pudo verificar tu cuenta.';
+      return;
+    }
+    if (!email || !ALLOWED_LOGIN_EMAILS.has(email)) {
+      errEl.textContent = 'Esta cuenta no está autorizada para esta aplicación.';
+      try {
+        await fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(accessToken), {
+          method: 'POST',
+          headers: { 'Content-type': 'application/x-www-form-urlencoded' }
+        });
+      } catch (ignore) {}
+      return;
+    }
+    const ttl = (resp.expires_in || 3600) * 1000;
+    sessionStorage.setItem('sci_access_token', accessToken);
+    sessionStorage.setItem('sci_token_exp', String(Date.now() + ttl));
+    sessionStorage.setItem('sci_user_email', email);
+    gmailAccessToken = accessToken;
+    hideLoginGate();
+    updateSessionHeader();
+  };
+  tokenClient.requestAccessToken({ prompt: 'consent' });
+}
+
+function whenGsiReady(cb, n) {
+  n = n || 0;
+  if (window.google && google.accounts && google.accounts.oauth2) {
+    cb();
+  } else if (n < 200) {
+    setTimeout(function () { whenGsiReady(cb, n + 1); }, 50);
+  }
+}
+
+function mimeToBase64Url(mimeStr) {
+  const bytes = new TextEncoder().encode(mimeStr);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const b64 = btoa(bin);
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function encodeSubjectRfc2047(s) {
+  return '=?UTF-8?B?' + btoa(unescape(encodeURIComponent(s))) + '?=';
+}
+
+function buildMimeForGmail(fromEmail, toList, subjectText, plainBody, pdfFileName, pdfB64) {
+  const nl = '\r\n';
+  const b = 'sci_' + Math.random().toString(36).slice(2, 14);
+  const safeName = (pdfFileName || 'cedula.pdf').replace(/[\r\n"]/g, '');
+  let mime = '';
+  mime += 'From: ' + fromEmail + nl;
+  mime += 'To: ' + toList.join(', ') + nl;
+  mime += 'Subject: ' + encodeSubjectRfc2047(subjectText) + nl;
+  mime += 'MIME-Version: 1.0' + nl;
+  mime += 'Content-Type: multipart/mixed; boundary="' + b + '"' + nl + nl;
+  mime += '--' + b + nl;
+  mime += 'Content-Type: text/plain; charset=UTF-8' + nl;
+  mime += 'Content-Transfer-Encoding: base64' + nl + nl;
+  mime += btoa(unescape(encodeURIComponent(plainBody))).replace(/.{76}/g, '$&\r\n') + nl;
+  if (pdfB64 && String(pdfB64).length > 50) {
+    const raw = String(pdfB64).replace(/\s/g, '');
+    mime += '--' + b + nl;
+    mime += 'Content-Type: application/pdf; name="' + safeName + '"' + nl;
+    mime += 'Content-Disposition: attachment; filename="' + safeName + '"' + nl;
+    mime += 'Content-Transfer-Encoding: base64' + nl + nl;
+    mime += raw.replace(/.{76}/g, '$&\r\n') + nl;
+  }
+  mime += '--' + b + '--' + nl;
+  return mime;
+}
+
+async function ensureFreshGmailToken() {
+  let tok = sessionStorage.getItem('sci_access_token');
+  const exp = parseInt(sessionStorage.getItem('sci_token_exp'), 10);
+  if (tok && exp > Date.now() + 60000) {
+    gmailAccessToken = tok;
+    return tok;
+  }
+  return new Promise(function (resolve, reject) {
+    const cid = getGoogleClientId();
+    if (!cid) { reject(new Error('Sin Client ID')); return; }
+    if (!tokenClient) initGoogleTokenClient();
+    if (!tokenClient) {
+      reject(new Error('Cliente OAuth no listo. Recarga la página.'));
+      return;
+    }
+    tokenClient.callback = async function (resp) {
+      if (resp.error || !resp.access_token) {
+        reject(new Error(resp.error || 'Sin token'));
+        return;
+      }
+      const email = await fetchUserEmail(resp.access_token);
+      if (!email || !ALLOWED_LOGIN_EMAILS.has(email)) {
+        reject(new Error('Sesión no válida'));
+        return;
+      }
+      sessionStorage.setItem('sci_access_token', resp.access_token);
+      sessionStorage.setItem('sci_token_exp', String(Date.now() + (resp.expires_in || 3600) * 1000));
+      sessionStorage.setItem('sci_user_email', email);
+      gmailAccessToken = resp.access_token;
+      resolve(resp.access_token);
+    };
+    tokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+
+async function gmailApiSend(accessToken, rawB64Url) {
+  const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ raw: rawB64Url })
+  });
+  const j = await r.json().catch(function () { return {}; });
+  if (!r.ok) {
+    const msg = j.error && j.error.message ? j.error.message : r.statusText;
+    throw new Error(msg || 'Error Gmail API');
+  }
+  return j;
 }
 
 // ── DESTINATARIOS ──────────────────────────────────────────────────────────────
@@ -1462,6 +1752,11 @@ function buildPreview() {
   const asunto = `[SCI] Notificación · Exp. ${numero} · ${cliente}`;
   document.getElementById('prev-subject').textContent = asunto;
 
+  const fromAddr = sessionStorage.getItem('sci_user_email') || '';
+  document.getElementById('prev-from').textContent = fromAddr
+    ? fromAddr + ' (tu Gmail)'
+    : '(Inicia sesión con Google para enviar desde Gmail)';
+
   // Terms sorted by urgency
   const sortedTerms = [...terminos].sort((a,b) => diasRestantes(a.vencimiento) - diasRestantes(b.vencimiento));
 
@@ -1531,7 +1826,7 @@ function row(label, val) {
 }
 
 // ── SEND EMAIL ─────────────────────────────────────────────────────────────────
-function sendEmail() {
+function collectEmailPayload() {
   const numero    = document.getElementById('exp-numero').value.trim();
   const cliente   = document.getElementById('exp-cliente').value.trim();
   const juzgado   = document.getElementById('exp-juzgado').value.trim();
@@ -1548,7 +1843,7 @@ function sendEmail() {
     ABOGADOS[i].emails.forEach(e => toList.push(e));
   });
 
-  const subject = encodeURIComponent(`[SCI] Notificación · Exp. ${numero} · ${cliente}`);
+  const subjectPlain = `[SCI] Notificación · Exp. ${numero} · ${cliente}`;
 
   let body = `NOTIFICACIÓN JUDICIAL — SCI DESPACHO JURÍDICO\n`;
   body += `${'═'.repeat(50)}\n\n`;
@@ -1579,14 +1874,81 @@ function sendEmail() {
   }
 
   body += `\n${'═'.repeat(50)}\n`;
-  body += `AVISO: Se adjunta la cédula de notificación en PDF.\n`;
+  body += `AVISO: Se adjunta la cédula de notificación en PDF cuando el archivo está cargado.\n`;
   body += `Por favor verificar los datos antes de actuar.\n`;
   body += `— Sistema de Notificaciones SCI Despacho Jurídico\n`;
 
-  const mailto = `mailto:${toList.join(',')}?subject=${subject}&body=${encodeURIComponent(body)}`;
+  return {
+    toList,
+    subjectPlain,
+    body,
+    pdfName: pdfFile ? pdfFile.name : 'cedula.pdf',
+    pdfBase64: pdfBase64
+  };
+}
+
+async function sendEmail() {
+  const sentAlert = document.getElementById('sent-alert');
+  const sentMailto = document.getElementById('sent-alert-mailto');
+  sentAlert.classList.remove('show');
+  sentMailto.classList.remove('show');
+
+  const cid = getGoogleClientId();
+  if (!cid) {
+    alert('Configura window.__SCI_GOOGLE_CLIENT_ID__ con tu Client ID OAuth en Google Cloud (tipo aplicación web). Luego recarga.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-send-gmail');
+  const payload = collectEmailPayload();
+  if (!payload.toList.length) {
+    alert('Selecciona al menos un destinatario en el paso 4.');
+    return;
+  }
+
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+    const token = await ensureFreshGmailToken();
+    const fromEmail = sessionStorage.getItem('sci_user_email');
+    if (!fromEmail) {
+      throw new Error('Sesión no válida; vuelve a iniciar sesión.');
+    }
+
+    const mime = buildMimeForGmail(
+      fromEmail,
+      payload.toList,
+      payload.subjectPlain,
+      payload.body,
+      payload.pdfName,
+      payload.pdfBase64
+    );
+    const raw = mimeToBase64Url(mime);
+    await gmailApiSend(token, raw);
+
+    sentAlert.textContent = '✅ Correo enviado desde tu cuenta Gmail.';
+    sentAlert.className = 'alert success show';
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    alert('No se pudo enviar con Gmail: ' + msg + '\n\nPuedes usar «Abrir en cliente de correo…» como respaldo.');
+    if (/401|403|invalid/i.test(msg)) {
+      sessionStorage.removeItem('sci_access_token');
+      sessionStorage.removeItem('sci_token_exp');
+      gmailAccessToken = null;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📤 Enviar con Gmail'; }
+  }
+}
+
+function sendEmailMailtoFallback() {
+  const payload = collectEmailPayload();
+  const subject = encodeURIComponent(payload.subjectPlain);
+  const mailto = `mailto:${payload.toList.join(',')}?subject=${subject}&body=${encodeURIComponent(payload.body)}`;
   window.location.href = mailto;
 
-  document.getElementById('sent-alert').classList.add('show');
+  document.getElementById('sent-alert').classList.remove('show');
+  const sentMailto = document.getElementById('sent-alert-mailto');
+  sentMailto.className = 'alert info show';
 }
 
 // ── NAVIGATION ─────────────────────────────────────────────────────────────────
@@ -1620,6 +1982,12 @@ renderRecipients();
 
 document.getElementById('cedula-fecha').addEventListener('change', recalcularTerminosPlazos);
 document.getElementById('notif-fecha').addEventListener('change', recalcularTerminosPlazos);
+
+document.getElementById('btn-google-login').addEventListener('click', startGoogleLogin);
+whenGsiReady(function () {
+  initGoogleTokenClient();
+  if (!tryRestoreSession()) showLoginGate();
+});
 </script>
 </body>
 </html>
