@@ -442,7 +442,7 @@
         </div>
         <div class="field span2">
           <label>Actuación / Acuerdo notificado</label>
-          <input type="text" id="exp-actuacion" placeholder="Ej. Auto que admite a trámite demanda, requiere documentos">
+          <textarea id="exp-actuacion" rows="5" placeholder="Acuerdo, puntos resolutivos (PRIMERO, SEGUNDO…), autos relevantes"></textarea>
         </div>
         <div class="field">
           <label>Abogado Responsable <span class="req">*</span></label>
@@ -962,12 +962,15 @@ function cleanClienteCandidate(s) {
   t = t.replace(/^[,\s:;.\-–]+|[,\s:;.\-–]+$/g, '');
   t = t.replace(/\b(el|la|los|las|del|de|y|e|que|esta?|este?)\b\s+/gi, '');
   if (/juzgado|tribunal|órgano|expediente|notifica|secretar/i.test(t)) return null;
-  if (t.length < 5 || t.length > 140) return null;
+  if (t.length < 5) return null;
+  const maxLen = /S\.?\s*A\.?\s*DE\s*C\.?\s*V\.?/i.test(t) ? 200 : 140;
+  if (t.length > maxLen) t = t.slice(0, maxLen).trim();
   return t;
 }
 
 function extractClienteFromText(raw, flat) {
   const patterns = [
+    /persona\s+moral\s+denominad[ao]\s+([^\n]{8,220}?)(?=,?\s+lo cual|,?\s+la cual|,?\s+el cual|\.?\s+cual\s+fue)/i,
     /notif(?:ica|ique|íquese|ícase|iquese)\s+(?:a|al|a\s+la|personalmente\s+a)\s+([^\n.;]{8,140})/i,
     /notificad[ao]s?\s*(?:a|al)\s*[:\s]+([^\n.;]{8,140})/i,
     /parte\s+notificada\s*[:\s]+([^\n.;]{8,140})/i,
@@ -988,45 +991,72 @@ function extractClienteFromText(raw, flat) {
     const m = raw.match(patterns[i]) || flat.match(patterns[i]);
     if (!m || !m[1]) continue;
     const q = cleanClienteCandidate(m[1]);
-    if (q && q.length > bestLen) {
+    const bonus = i === 0 ? 320 : 0;
+    if (q && q.length + bonus > bestLen) {
       best = q;
-      bestLen = q.length;
+      bestLen = q.length + bonus;
     }
   }
   return best;
 }
 
+function extractActuacionFromPrimeroSegundo(raw, flat) {
+  const collapse = function (s) {
+    return s.replace(/\r\n/g, '\n').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+  const list = [flat, collapse(raw)];
+  for (let c = 0; c < list.length; c++) {
+    const t = list[c];
+    if (!t || t.length < 40) continue;
+    const p = t.search(/\bPRIMERO\s*\.?\s+/i);
+    if (p === -1) continue;
+    let end = t.length;
+    const sirve = t.search(/\s+Sirve\s+de\s+apoyo\b/i);
+    let notif = t.search(/\s+Notif[íi]cu?ese\s+personal/i);
+    if (notif === -1) notif = t.search(/\bNotif[íi]cu?ese\s*\.?\s*$/i);
+    if (sirve !== -1 && sirve > p) end = Math.min(end, sirve);
+    if (notif !== -1 && notif > p) end = Math.min(end, notif);
+    let slice = t.slice(p, end).trim();
+    slice = slice.replace(/^PRIMERO\s*\.?\s+/i, 'PRIMERO. ');
+    if (slice.length >= 80) return slice.slice(0, 4000);
+  }
+  return null;
+}
+
 function extractActuacionFromText(raw, flat) {
+  const puntos = extractActuacionFromPrimeroSegundo(raw, flat);
+  if (puntos) return puntos;
+
   const rawN = raw.replace(/\r\n/g, '\n');
   const blocks = [
-    /\bACUERDO\s*:?\s*([\s\S]{30,650}?)(?=\n\s*(?:EXPEDIENTE|Expediente|N[°º]\s*Exp|JUZGADO|Página\s+\d|El\s+(?:Secret|Sentido)|\s*Firma\s*:|$))/i,
-    /\bAcuerdo\s*(?:\([^\)]{0,40}\))?\s*:?\s*([\s\S]{30,600}?)(?=\n\n|\n\s*(?:EXPEDIENTE|JUZGADO|Asunto|Med|Proveído)|$)/i,
-    /\b(?:RESOLUCI[OÓ]N|Resoluci[oó]n)\s*[:\s]+([\s\S]{30,550}?)(?=\n\n|EXPEDIENTE|Juzgado|Página)/i,
-    /NOTIF[ÍI]QUESE|notif[íi]quese|Notifíquese[^.]{5,120}\.\s*([\s\S]{40,550}?)(?=\n\n|EXPEDIENTE|JUZGADO|$)/i,
-    /Por\s+lo\s+(?:expuesto|analizado|considerando)[^.]{0,120}\.\s*([\s\S]{50,550}?)(?=\n\n|EXPEDIENTE|$)/i,
-    /SE\s+RESUELVE\s*:\s*([\s\S]{40,550}?)(?=\n\n|EXPEDIENTE|JUZGADO|$)/i
+    /\bACUERDO\s*:?\s*([\s\S]{30,1800}?)(?=\n\s*(?:EXPEDIENTE|Expediente|N[°º]\s*Exp|JUZGADO|Página\s+\d|El\s+(?:Secret|Sentido)|\s*Firma\s*:|$))/i,
+    /\bAcuerdo\s*(?:\([^\)]{0,40}\))?\s*:?\s*([\s\S]{30,1800}?)(?=\n\n|\n\s*(?:EXPEDIENTE|JUZGADO|Asunto|Med|Proveído)|$)/i,
+    /\b(?:RESOLUCI[OÓ]N|Resoluci[oó]n)\s*[:\s]+([\s\S]{30,1600}?)(?=\n\n|EXPEDIENTE|Juzgado|Página)/i,
+    /NOTIF[ÍI]QUESE|notif[íi]quese|Notifíquese[^.]{5,120}\.\s*([\s\S]{40,1600}?)(?=\n\n|EXPEDIENTE|JUZGADO|$)/i,
+    /Por\s+lo\s+(?:expuesto|analizado|considerando)[^.]{0,120}\.\s*([\s\S]{50,1600}?)(?=\n\n|EXPEDIENTE|$)/i,
+    /SE\s+RESUELVE\s*:\s*([\s\S]{40,1600}?)(?=\n\n|EXPEDIENTE|JUZGADO|$)/i
   ];
   for (let i = 0; i < blocks.length; i++) {
     const m = rawN.match(blocks[i]);
     if (m && m[1]) {
       let t = m[1].replace(/\s+/g, ' ').trim();
       t = t.replace(/^[.,;\s:–-]+|[.,;\s:–-]+$/g, '');
-      if (t.length >= 28) return t.slice(0, 520);
+      if (t.length >= 28) return t.slice(0, 2000);
     }
   }
   const lines = rawN.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
   for (let j = 0; j < lines.length; j++) {
     const l = lines[j];
-    if (/admite|niega|requiere|concede|dése\s+vista|dígase|otorga|declara|ordena|subsiste|revoca|aprueba|hágase|téngase|agréguese|gírese/i.test(l) && l.length > 38) {
+    if (/admite|niega|requiere|concede|dése\s+vista|dígase|otorga|declara|ordena|subsiste|revoca|aprueba|hágase|téngase|agréguese|gírese|reanudación|conciliator/i.test(l) && l.length > 38) {
       let block = l;
       if (j + 1 < lines.length && lines[j + 1].length > 20 && !/^expediente|juzgado|folio/i.test(lines[j + 1])) {
         block += ' ' + lines[j + 1];
       }
-      return block.replace(/\s+/g, ' ').trim().slice(0, 520);
+      return block.replace(/\s+/g, ' ').trim().slice(0, 2000);
     }
   }
-  const m2 = flat.match(/(?:Acuerdo|Auto|Prove[ií]do|Determina|Notifíc[oa]|Se\s+notifica)\s*:?\s*([^.]{25,400})/i);
-  return m2 ? m2[1].trim().replace(/\s+/g, ' ').slice(0, 520) : null;
+  const m2 = flat.match(/(?:Acuerdo|Auto|Prove[ií]do|Determina|Notifíc[oa]|Se\s+notifica)\s*:?\s*([^.]{25,800})/i);
+  return m2 ? m2[1].trim().replace(/\s+/g, ' ').slice(0, 2000) : null;
 }
 
 function pushTerminoUniq(arr, seen, dias, accion) {
