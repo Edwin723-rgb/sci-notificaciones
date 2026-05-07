@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SCI — Registro de Notificaciones</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --navy: #0f1c2e;
+    --navy2: #172438;
+    --gold: #c9a84c;
+    --gold-light: #e8c97a;
+    --cream: #f8f4ee;
+    --cream2: #f0eade;
+    --red: #c0392b;
+    --green: #1a6b4a;
+    --text: #1a1a2e;
+    --muted: #6b7280;
+    --border: #ddd5c8;
+    --shadow: 0 4px 24px rgba(15,28,46,0.10);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--cream);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* HEADER */
+  header {
+    background: var(--navy);
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 3px solid var(--gold);
+  }
+  header .logo-mark {
+    width: 42px; height: 42px;
+    border: 2px solid var(--gold);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Playfair Display', serif;
+    font-size: 18px; color: var(--gold); font-weight: 700;
+  }
+  header h1 {
+    font-family: 'Playfair Display', serif;
+    color: #fff; font-size: 20px; font-weight: 600; letter-spacing: 0.3px;
+  }
+  header span {
+    color: var(--gold); font-size: 13px; font-weight: 300; letter-spacing: 1px;
+    text-transform: uppercase; display: block; margin-top: 2px;
+  }
+
+  /* LAYOUT */
+  .container { max-width: 900px; margin: 0 auto; padding: 32px 20px 60px; }
+
+  /* STEPS */
+  .steps {
+    display: flex; gap: 0; margin-bottom: 32px;
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    background: #fff; box-shadow: var(--shadow);
+  }
+  .step {
+    flex: 1; padding: 14px 10px; text-align: center;
+    font-size: 12px; font-weight: 500; color: var(--muted);
+    cursor: pointer; transition: all .2s;
+    border-right: 1px solid var(--border);
+    position: relative;
+  }
+  .step:last-child { border-right: none; }
+  .step .step-num {
+    display: block;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--cream2); color: var(--muted);
+    font-size: 11px; font-weight: 600;
+    margin: 0 auto 5px; line-height: 24px;
+    transition: all .2s;
+  }
+  .step.active { background: var(--navy); color: #fff; }
+  .step.active .step-num { background: var(--gold); color: var(--navy); }
+  .step.done { background: var(--cream2); color: var(--navy); }
+  .step.done .step-num { background: var(--green); color: #fff; }
+
+  /* CARDS */
+  .card {
+    background: #fff; border-radius: 12px;
+    border: 1px solid var(--border); box-shadow: var(--shadow);
+    padding: 28px 28px 24px; margin-bottom: 20px;
+  }
+  .card-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 17px; color: var(--navy);
+    margin-bottom: 20px; padding-bottom: 12px;
+    border-bottom: 2px solid var(--cream2);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .card-title .icon {
+    width: 30px; height: 30px; background: var(--navy);
+    border-radius: 6px; display: flex; align-items: center;
+    justify-content: center; font-size: 14px; flex-shrink: 0;
+  }
+
+  /* FORM */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+  .form-grid.full { grid-template-columns: 1fr; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field.span2 { grid-column: span 2; }
+  .field.span3 { grid-column: span 3; }
+  label { font-size: 12px; font-weight: 600; color: var(--navy); text-transform: uppercase; letter-spacing: 0.5px; }
+  label .req { color: var(--red); margin-left: 2px; }
+  input, select, textarea {
+    padding: 10px 13px; border: 1.5px solid var(--border);
+    border-radius: 7px; font-family: 'DM Sans', sans-serif;
+    font-size: 14px; color: var(--text); background: var(--cream);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(201,168,76,0.15);
+    background: #fff;
+  }
+  textarea { resize: vertical; min-height: 80px; }
+
+  /* UPLOAD ZONE */
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: 10px;
+    padding: 28px 20px; text-align: center;
+    cursor: pointer; transition: all .2s; background: var(--cream);
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--gold); background: #fff;
+  }
+  .upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    width: 100%; height: 100%; padding: 0; border: none;
+  }
+  .upload-zone .upload-icon { font-size: 32px; margin-bottom: 8px; }
+  .upload-zone p { font-size: 14px; color: var(--muted); }
+  .upload-zone strong { color: var(--navy); }
+  .file-info {
+    display: none; align-items: center; gap: 10px;
+    background: var(--cream2); border-radius: 8px; padding: 12px 16px;
+    margin-top: 12px; border: 1px solid var(--border);
+  }
+  .file-info.show { display: flex; }
+  .file-info .fname { font-size: 13px; font-weight: 500; color: var(--navy); flex: 1; word-break: break-all; }
+  .file-info .fsize { font-size: 11px; color: var(--muted); }
+  .remove-file { cursor: pointer; color: var(--red); font-size: 18px; line-height: 1; padding: 2px 5px; }
+
+  /* AI ANALYSIS */
+  .ai-btn {
+    width: 100%; padding: 13px; background: var(--navy);
+    color: #fff; border: none; border-radius: 8px;
+    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all .2s; display: flex;
+    align-items: center; justify-content: center; gap: 8px; margin-top: 16px;
+  }
+  .ai-btn:hover { background: var(--navy2); box-shadow: 0 4px 16px rgba(15,28,46,0.25); }
+  .ai-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .ai-btn.secondary {
+    background: transparent; color: var(--navy);
+    border: 1.5px solid var(--navy);
+  }
+  .ai-btn.secondary:hover { background: var(--cream2); }
+  .ai-btn.gold { background: var(--gold); color: var(--navy); }
+  .ai-btn.gold:hover { background: var(--gold-light); }
+
+  /* LOADER */
+  .loader {
+    display: none; align-items: center; justify-content: center;
+    gap: 10px; padding: 20px; color: var(--muted); font-size: 13px;
+  }
+  .loader.show { display: flex; }
+  .spinner {
+    width: 20px; height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* AI RESULT */
+  .ai-result {
+    display: none; background: var(--cream2);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; margin-top: 16px;
+  }
+  .ai-result.show { display: block; }
+  .ai-result h4 {
+    font-size: 12px; font-weight: 700; color: var(--navy);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .ai-result h4::before { content: '✦'; color: var(--gold); }
+
+  /* TÉRMINOS */
+  .termino-item {
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 10px; position: relative;
+    border-left: 4px solid var(--gold);
+  }
+  .termino-item.urgente { border-left-color: var(--red); }
+  .termino-item.moderado { border-left-color: #e67e22; }
+  .termino-item .t-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .termino-item .t-accion { font-size: 14px; font-weight: 600; color: var(--navy); flex: 1; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.3px; flex-shrink: 0;
+  }
+  .badge.urgente { background: #fdecea; color: var(--red); }
+  .badge.moderado { background: #fef0e7; color: #c0550a; }
+  .badge.normal { background: #e8f5ee; color: var(--green); }
+  .termino-dates { margin-top: 8px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .termino-dates span { font-size: 12px; color: var(--muted); }
+  .termino-dates span strong { color: var(--navy); }
+  .remove-termino {
+    position: absolute; top: 10px; right: 10px;
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: 16px; padding: 2px 6px;
+    border-radius: 4px; transition: all .15s;
+  }
+  .remove-termino:hover { color: var(--red); background: #fdecea; }
+
+  /* ADD TERM FORM */
+  .add-term-form {
+    background: var(--cream2); border: 1px dashed var(--border);
+    border-radius: 8px; padding: 16px; margin-top: 8px;
+    display: none;
+  }
+  .add-term-form.show { display: block; }
+  .add-term-row { display: grid; grid-template-columns: 1fr 120px 1fr; gap: 12px; align-items: end; }
+
+  /* RECIPIENTS */
+  .recipient-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px; margin-top: 10px;
+  }
+  .recipient-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border: 1.5px solid var(--border);
+    border-radius: 8px; cursor: pointer; transition: all .15s;
+    background: #fff;
+  }
+  .recipient-chip:hover { border-color: var(--gold); }
+  .recipient-chip.selected { border-color: var(--navy); background: var(--navy); color: #fff; }
+  .recipient-chip .avatar {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--gold); color: var(--navy);
+    font-size: 11px; font-weight: 700; display: flex;
+    align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .recipient-chip.selected .avatar { background: var(--gold); }
+  .recipient-chip .rname { font-size: 13px; font-weight: 500; }
+
+  /* PREVIEW */
+  #preview-section { display: none; }
+  #preview-section.show { display: block; }
+  .preview-email {
+    background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; box-shadow: var(--shadow);
+  }
+  .preview-email-header {
+    background: var(--navy); padding: 16px 20px; color: #fff;
+  }
+  .preview-email-header .email-row { font-size: 12px; padding: 2px 0; }
+  .preview-email-header .email-row span { color: var(--gold-light); margin-right: 6px; font-weight: 600; }
+  .preview-email-body { padding: 24px; }
+  .preview-email-body h2 {
+    font-family: 'Playfair Display', serif; font-size: 20px;
+    color: var(--navy); margin-bottom: 4px;
+  }
+  .preview-email-body .subtitle { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+  .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  .info-table td { padding: 9px 12px; font-size: 13px; border-bottom: 1px solid var(--cream2); }
+  .info-table td:first-child { font-weight: 600; color: var(--navy); width: 160px; background: var(--cream); }
+  .terminos-preview { margin-top: 16px; }
+  .terminos-preview h3 { font-size: 13px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+  .tp-item {
+    background: var(--cream); border-radius: 6px; padding: 10px 14px;
+    margin-bottom: 8px; display: flex; gap: 12px; align-items: center; border-left: 3px solid var(--gold);
+  }
+  .tp-item.urgente { border-left-color: var(--red); }
+  .tp-item.moderado { border-left-color: #e67e22; }
+  .tp-accion { flex: 1; font-size: 13px; font-weight: 500; }
+  .tp-fecha { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .footer-note { font-size: 11px; color: var(--muted); margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--cream2); }
+
+  /* ALERT */
+  .alert {
+    padding: 12px 16px; border-radius: 8px; font-size: 13px;
+    margin-bottom: 16px; display: none;
+  }
+  .alert.show { display: block; }
+  .alert.error { background: #fdecea; color: var(--red); border: 1px solid #f5c6c2; }
+  .alert.success { background: #e8f5ee; color: var(--green); border: 1px solid #b8dfc9; }
+  .alert.info { background: #e8f0fe; color: #1a4ba0; border: 1px solid #c3d3f8; }
+
+  /* NAV BUTTONS */
+  .nav-btns { display: flex; gap: 12px; margin-top: 24px; }
+  .nav-btns .ai-btn { flex: 1; }
+
+  /* RESPONSIVE */
+  @media (max-width: 600px) {
+    .form-grid { grid-template-columns: 1fr; }
+    .form-grid.three { grid-template-columns: 1fr; }
+    .field.span2, .field.span3 { grid-column: span 1; }
+    .add-term-row { grid-template-columns: 1fr; }
+    .steps { flex-wrap: wrap; }
+    .step { min-width: 50%; }
+    header { padding: 14px 16px; }
+    .container { padding: 20px 12px 60px; }
+    .card { padding: 18px 16px; }
+  }
+
+  .section-page { display: none; }
+  .section-page.active { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">SCI</div>
+  <div>
+    <h1>Registro de Notificaciones</h1>
+    <span>SCI Despacho Jurídico · Villahermosa, Tabasco</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- STEPS -->
+  <div class="steps">
+    <div class="step active" id="step1-tab" onclick="goToStep(1)">
+      <span class="step-num">1</span>Cédula PDF
+    </div>
+    <div class="step" id="step2-tab" onclick="goToStep(2)">
+      <span class="step-num">2</span>Datos del Expediente
+    </div>
+    <div class="step" id="step3-tab" onclick="goToStep(3)">
+      <span class="step-num">3</span>Términos
+    </div>
+    <div class="step" id="step4-tab" onclick="goToStep(4)">
+      <span class="step-num">4</span>Destinatarios
+    </div>
+    <div class="step" id="step5-tab" onclick="goToStep(5)">
+      <span class="step-num">5</span>Vista Previa
+    </div>
+  </div>
+
+  <!-- STEP 1: PDF -->
+  <div class="section-page active" id="page1">
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">📄</div>
+        Cargar Cédula de Notificación
+      </div>
+      <div class="upload-zone" id="upload-zone">
+        <input type="file" id="pdf-input" accept=".pdf,image/*">
+        <div class="upload-icon">📂</div>
+        <p><strong>Arrastra el PDF aquí</strong> o haz clic para seleccionar</p>
+        <p style="margin-top:6px;font-size:12px;">PDF o imagen · Cédula de notificación judicial</p>
+      </div>
+      <div class="file-info" id="file-info">
+        <span style="font-size:20px">📋</span>
+        <span class="fname" id="fname-label"></span>
+        <span class="fsize" id="fsize-label"></span>
+        <span class="remove-file" onclick="removeFile()" title="Quitar archivo">✕</span>
+      </div>
+
+      <button class="ai-btn" id="analyze-btn" onclick="analyzePDF()" disabled>
+        <span>✦</span> Analizar cédula con IA
+      </button>
+      <div class="loader" id="ai-loader">
+        <div class="spinner"></div>
+        Analizando la cédula… esto puede tardar unos segundos
+      </div>
+      <div class="alert" id="ai-alert"></div>
+      <div class="ai-result" id="ai-result">
+        <h4>Datos extraídos de la cédula</h4>
+        <div id="ai-result-content"></div>
+        <button class="ai-btn secondary" style="margin-top:12px" onclick="applyAIData()">
+          ✓ Aplicar datos al formulario
+        </button>
+      </div>
+    </div>
+    <div class="nav-btns">
+      <button class="ai-btn gold" onclick="goToStep(2)">Continuar →</button>
+    </div>
+  </div>
+
+  <!-- STEP 2: DATOS -->
+  <div class="section-page" id="page2">
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">⚖️</div>
+        Datos del Expediente
+      </div>
+      <div class="alert info show" id="info-manual">
+        💡 Puedes llenar estos datos manualmente o aplicar los extraídos por IA en el paso anterior.
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label>No. Expediente <span class="req">*</span></label>
+          <input type="text" id="exp-numero" placeholder="Ej. 251/2025-S-4">
+        </div>
+        <div class="field">
+          <label>Juzgado / Tribunal</label>
+          <input type="text" id="exp-juzgado" placeholder="Ej. Tribunal de Justicia Administrativa">
+        </div>
+        <div class="field">
+          <label>Cliente / Parte <span class="req">*</span></label>
+          <input type="text" id="exp-cliente" placeholder="Ej. Grúas Hermanas Rodríguez">
+        </div>
+        <div class="field">
+          <label>Posición procesal</label>
+          <select id="exp-posicion">
+            <option value="">-- Seleccionar --</option>
+            <option value="Parte Actora">Parte Actora</option>
+            <option value="Parte Demandada">Parte Demandada</option>
+            <option value="Tercero Interesado">Tercero Interesado</option>
+            <option value="Tercero Perjudicado">Tercero Perjudicado</option>
+            <option value="Quejoso">Quejoso (Amparo)</option>
+            <option value="Autoridad Responsable">Autoridad Responsable</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Fecha de la cédula</label>
+          <input type="date" id="cedula-fecha">
+        </div>
+        <div class="field">
+          <label>Fecha de notificación</label>
+          <input type="date" id="notif-fecha">
+        </div>
+        <div class="field span2">
+          <label>Actuación / Acuerdo notificado</label>
+          <input type="text" id="exp-actuacion" placeholder="Ej. Auto que admite a trámite demanda, requiere documentos">
+        </div>
+        <div class="field">
+          <label>Abogado Responsable <span class="req">*</span></label>
+          <select id="exp-abogado">
+            <option value="">-- Seleccionar --</option>
+            <option value="Dainer Chable">Dainer Chable</option>
+            <option value="Lisbeth Losve">Lisbeth Losve</option>
+            <option value="Alejandra Herrera">Alejandra Herrera</option>
+            <option value="Trino Hernández">Trino Hernández</option>
+            <option value="Ángel Luque">Ángel Luque</option>
+            <option value="Samuel Méndez">Samuel Méndez</option>
+            <option value="Sergio Iván">Sergio Iván</option>
+            <option value="Edwin Morales">Edwin Morales</option>
+            <option value="Ingrid Correa">Ingrid Correa</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Materia</label>
+          <select id="exp-materia">
+            <option value="">-- Seleccionar --</option>
+            <option>Amparo</option>
+            <option>Laboral</option>
+            <option>Civil</option>
+            <option>Mercantil</option>
+            <option>Administrativo</option>
+            <option>Familiar</option>
+            <option>Penal</option>
+            <option>Corporativo</option>
+          </select>
+        </div>
+        <div class="field span2">
+          <label>Observaciones</label>
+          <textarea id="exp-obs" placeholder="Notas adicionales, instrucciones especiales, contexto relevante…"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="nav-btns">
+      <button class="ai-btn secondary" onclick="goToStep(1)">← Atrás</button>
+      <button class="ai-btn gold" onclick="goToStep(3)">Continuar →</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: TÉRMINOS -->
+  <div class="section-page" id="page3">
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">📅</div>
+        Términos y Plazos
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+        Los términos se calculan contando solo <strong>días hábiles</strong>, excluyendo sábados, domingos y días inhábiles del calendario SCJN 2026.
+      </p>
+      <div id="terminos-list"></div>
+      <div class="alert" id="term-alert"></div>
+
+      <button class="ai-btn secondary" onclick="toggleAddTerm()" style="margin-top:8px">
+        + Agregar término
+      </button>
+
+      <div class="add-term-form" id="add-term-form">
+        <div class="add-term-row">
+          <div class="field">
+            <label>Acción requerida</label>
+            <input type="text" id="new-term-accion" placeholder="Ej. Presentar contestación de demanda">
+          </div>
+          <div class="field">
+            <label>Días hábiles</label>
+            <input type="number" id="new-term-dias" min="1" max="90" placeholder="5">
+          </div>
+          <div class="field">
+            <label>Fecha inicio cómputo</label>
+            <input type="date" id="new-term-inicio">
+          </div>
+        </div>
+        <div class="nav-btns" style="margin-top:12px">
+          <button class="ai-btn secondary" onclick="toggleAddTerm()">Cancelar</button>
+          <button class="ai-btn" onclick="addTermino()">Agregar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DÍAS INHÁBILES 2026 -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-title" style="cursor:pointer;user-select:none" onclick="toggleInhabiles()">
+        <div class="icon">🗓️</div>
+        Días inhábiles SCJN 2026
+        <span style="margin-left:auto;font-size:12px;color:var(--muted)">Ver / ocultar</span>
+      </div>
+      <div id="inhabiles-table" style="display:none">
+        <table class="info-table" style="width:100%">
+          <thead>
+            <tr>
+              <td style="font-weight:700;color:var(--navy);background:var(--cream2)">Mes</td>
+              <td style="font-weight:700;color:var(--navy);background:var(--cream2)">Días</td>
+              <td style="font-weight:700;color:var(--navy);background:var(--cream2)">Fundamento</td>
+            </tr>
+          </thead>
+          <tbody id="inhabiles-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="nav-btns">
+      <button class="ai-btn secondary" onclick="goToStep(2)">← Atrás</button>
+      <button class="ai-btn gold" onclick="goToStep(4)">Continuar →</button>
+    </div>
+  </div>
+
+  <!-- STEP 4: DESTINATARIOS -->
+  <div class="section-page" id="page4">
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">📬</div>
+        Destinatarios del Correo
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+        Selecciona a quiénes se enviará esta notificación. Por defecto se seleccionan todos.
+      </p>
+      <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+        <button class="ai-btn secondary" style="flex:none;width:auto;padding:8px 16px;font-size:12px" onclick="selectAll(true)">Seleccionar todos</button>
+        <button class="ai-btn secondary" style="flex:none;width:auto;padding:8px 16px;font-size:12px" onclick="selectAll(false)">Limpiar selección</button>
+      </div>
+      <div class="recipient-grid" id="recipient-grid"></div>
+    </div>
+    <div class="nav-btns">
+      <button class="ai-btn secondary" onclick="goToStep(3)">← Atrás</button>
+      <button class="ai-btn gold" onclick="buildPreviewAndGo()">Ver Vista Previa →</button>
+    </div>
+  </div>
+
+  <!-- STEP 5: PREVIEW -->
+  <div class="section-page" id="page5">
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">✉️</div>
+        Vista Previa del Correo
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+        Revisa el correo antes de enviarlo. Puedes regresar a editar cualquier dato.
+      </p>
+      <div class="preview-email">
+        <div class="preview-email-header">
+          <div class="email-row"><span>Para:</span> <span id="prev-to"></span></div>
+          <div class="email-row"><span>Asunto:</span> <span id="prev-subject"></span></div>
+          <div class="email-row"><span>De:</span> SCI Despacho Jurídico</div>
+        </div>
+        <div class="preview-email-body">
+          <div id="prev-body-html"></div>
+        </div>
+      </div>
+    </div>
+    <div class="nav-btns">
+      <button class="ai-btn secondary" onclick="goToStep(4)">← Editar</button>
+      <button class="ai-btn gold" onclick="sendEmail()" style="font-size:15px">
+        📤 Abrir correo para enviar
+      </button>
+    </div>
+    <div class="alert success" id="sent-alert" style="margin-top:16px">
+      ✅ Se abrió tu cliente de correo con el mensaje listo. Recuerda adjuntar el PDF de la cédula manualmente.
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── ESTADO GLOBAL ──────────────────────────────────────────────────────────────
+let currentStep = 1;
+let pdfFile = null;
+let pdfBase64 = null;
+let aiData = null;
+let terminos = [];
+
+// ── DÍAS INHÁBILES SCJN 2026 ───────────────────────────────────────────────────
+const INHABILES_2026_RAW = [
+  { mes: 'Enero',     dias: [1],                       fundamento: 'Art. 19 Ley de Amparo; Art. 74 LFT fracc. I; Art. 229 LOPJF' },
+  { mes: 'Febrero',   dias: [2],                       fundamento: 'Art. 74 LFT fracc. II; Acuerdo 18/2013 SCJN' },
+  { mes: 'Febrero',   dias: [5],                       fundamento: 'Art. 19 Ley de Amparo; Art. 229 LOPJF; Acuerdo 18/2013 SCJN' },
+  { mes: 'Marzo',     dias: [16],                      fundamento: 'Art. 74 LFT fracc. III; Acuerdo 18/2013 SCJN' },
+  { mes: 'Marzo',     dias: [21],                      fundamento: 'Art. 19 Ley de Amparo; Art. 229 LOPJF; Acuerdo 18/2013 SCJN' },
+  { mes: 'Abril',     dias: [1,2,3],                   fundamento: 'Acuerdo 18/2013 SCJN (Semana Santa)' },
+  { mes: 'Mayo',      dias: [1],                       fundamento: 'Art. 19 Ley de Amparo; Art. 74 LFT fracc. IV; Art. 229 LOPJF' },
+  { mes: 'Mayo',      dias: [4],                       fundamento: 'Acuerdo 18/2013 SCJN' },
+  { mes: 'Mayo',      dias: [5],                       fundamento: 'Art. 19 Ley de Amparo; Acuerdo 18/2013 SCJN' },
+  { mes: 'Julio',     dias: Array.from({length:16},(_,i)=>i+16), fundamento: 'Art. 3 LOPJF (Período vacacional)' },
+  { mes: 'Septiembre',dias: [14],                      fundamento: 'Art. 19 Ley de Amparo; Art. 229 LOPJF' },
+  { mes: 'Septiembre',dias: [16],                      fundamento: 'Art. 19 Ley de Amparo; Art. 74 LFT fracc. V; Art. 229 LOPJF' },
+  { mes: 'Octubre',   dias: [12],                      fundamento: 'Art. 19 Ley de Amparo; Acuerdo 18/2013 SCJN' },
+  { mes: 'Noviembre', dias: [16],                      fundamento: 'Art. 74 LFT fracc. VI; Acuerdo 18/2013 SCJN' },
+  { mes: 'Noviembre', dias: [20],                      fundamento: 'Art. 19 Ley de Amparo; Art. 229 LOPJF; Acuerdo 18/2013 SCJN' },
+  { mes: 'Diciembre', dias: Array.from({length:16},(_,i)=>i+16), fundamento: 'Art. 3 LOPJF (Período vacacional)' },
+];
+
+// Build a Set of YYYY-MM-DD for fast lookup
+const INHABILES_SET = new Set();
+const MONTH_MAP = {
+  'Enero':1,'Febrero':2,'Marzo':3,'Abril':4,'Mayo':5,'Junio':6,
+  'Julio':7,'Agosto':8,'Septiembre':9,'Octubre':10,'Noviembre':11,'Diciembre':12
+};
+INHABILES_2026_RAW.forEach(r => {
+  const m = MONTH_MAP[r.mes];
+  r.dias.forEach(d => {
+    const key = `2026-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    INHABILES_SET.add(key);
+  });
+});
+
+function isInhabil(date) {
+  const dow = date.getDay();
+  if (dow === 0 || dow === 6) return true;
+  const key = date.toISOString().slice(0,10);
+  return INHABILES_SET.has(key);
+}
+
+function addBusinessDays(startDateStr, days) {
+  let d = new Date(startDateStr + 'T12:00:00');
+  // move to next business day to start count
+  d.setDate(d.getDate() + 1);
+  let counted = 0;
+  while (counted < days) {
+    if (!isInhabil(d)) counted++;
+    if (counted < days) d.setDate(d.getDate() + 1);
+  }
+  // if landing date is inhábil, move forward
+  while (isInhabil(d)) d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0,10);
+}
+
+function formatDate(str) {
+  if (!str) return '—';
+  const [y,m,d] = str.split('-');
+  const months = ['','enero','febrero','marzo','abril','mayo','junio',
+                  'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  return `${parseInt(d)} de ${months[parseInt(m)]} de ${y}`;
+}
+
+function diasRestantes(vencimientoStr) {
+  const hoy = new Date();
+  hoy.setHours(0,0,0,0);
+  const v = new Date(vencimientoStr + 'T12:00:00');
+  const diff = Math.round((v - hoy) / (1000*60*60*24));
+  return diff;
+}
+
+function urgenciaLabel(dias) {
+  if (dias < 0) return {cls:'urgente', txt:'VENCIDO'};
+  if (dias <= 2) return {cls:'urgente', txt:`${dias}d — URGENTE`};
+  if (dias <= 5) return {cls:'moderado', txt:`${dias}d — Próximo`};
+  return {cls:'normal', txt:`${dias}d`};
+}
+
+// ── DESTINATARIOS ──────────────────────────────────────────────────────────────
+const ABOGADOS = [
+  { nombre: 'Dainer',    apellido: 'Chable',    emails: ['dainerchable@gmail.com'] },
+  { nombre: 'Lisbeth',   apellido: 'Losve',     emails: ['lisbeth@solucionescorporativas.mx','lisbethlosve_@outlook.es'] },
+  { nombre: 'Alejandra', apellido: 'Herrera',   emails: ['alejandra_herrwea99@hotmail.com','alejandra@solucionescorporativas.mx'] },
+  { nombre: 'Trino',     apellido: 'Hernández', emails: ['josehernandez@solucionescorporativas.mx'] },
+  { nombre: 'Ángel',     apellido: 'Luque',     emails: ['angelluquepalomino@gmail.com'] },
+  { nombre: 'Samuel',    apellido: 'Méndez',    emails: ['smendez@solucionescorporativas.mx'] },
+  { nombre: 'Sergio',    apellido: 'Iván',      emails: ['sivg009@gmail.com'] },
+  { nombre: 'Edwin',     apellido: 'Morales',   emails: ['edwinmmoralesg@gmail.com'] },
+  { nombre: 'Ingrid',    apellido: 'Correa',    emails: ['janice_correa18@hotmail.com'] },
+];
+
+let selectedRecipients = new Set(ABOGADOS.map((_,i) => i));
+
+function renderRecipients() {
+  const grid = document.getElementById('recipient-grid');
+  grid.innerHTML = ABOGADOS.map((a, i) => {
+    const sel = selectedRecipients.has(i) ? 'selected' : '';
+    const initials = a.nombre[0] + a.apellido[0];
+    return `<div class="recipient-chip ${sel}" onclick="toggleRecipient(${i})" id="chip-${i}">
+      <div class="avatar">${initials}</div>
+      <span class="rname">${a.nombre}</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleRecipient(i) {
+  if (selectedRecipients.has(i)) selectedRecipients.delete(i);
+  else selectedRecipients.add(i);
+  renderRecipients();
+}
+
+function selectAll(val) {
+  if (val) ABOGADOS.forEach((_,i) => selectedRecipients.add(i));
+  else selectedRecipients.clear();
+  renderRecipients();
+}
+
+// ── TÉRMINOS ───────────────────────────────────────────────────────────────────
+function renderTerminos() {
+  const list = document.getElementById('terminos-list');
+  if (!terminos.length) {
+    list.innerHTML = `<p style="font-size:13px;color:var(--muted);padding:12px 0">
+      Aún no hay términos registrados. Agrega el primero con el botón de abajo, o extráelos de la cédula con la IA.
+    </p>`;
+    return;
+  }
+  list.innerHTML = terminos.map((t, i) => {
+    const diasR = diasRestantes(t.vencimiento);
+    const urg = urgenciaLabel(diasR);
+    return `<div class="termino-item ${urg.cls}">
+      <button class="remove-termino" onclick="removeTermino(${i})" title="Eliminar">✕</button>
+      <div class="t-header">
+        <span class="t-accion">${t.accion}</span>
+        <span class="badge ${urg.cls}">${urg.txt}</span>
+      </div>
+      <div class="termino-dates">
+        <span><strong>${t.dias} días hábiles</strong></span>
+        <span>Inicia: <strong>${formatDate(t.inicio)}</strong></span>
+        <span>Vence: <strong>${formatDate(t.vencimiento)}</strong></span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function removeTermino(i) {
+  terminos.splice(i, 1);
+  renderTerminos();
+}
+
+function toggleAddTerm() {
+  const f = document.getElementById('add-term-form');
+  f.classList.toggle('show');
+  if (f.classList.contains('show')) {
+    const notifFecha = document.getElementById('notif-fecha').value;
+    if (notifFecha) document.getElementById('new-term-inicio').value = notifFecha;
+  }
+}
+
+function addTermino() {
+  const accion = document.getElementById('new-term-accion').value.trim();
+  const diasStr = document.getElementById('new-term-dias').value;
+  const inicio = document.getElementById('new-term-inicio').value;
+  const alert = document.getElementById('term-alert');
+
+  if (!accion || !diasStr || !inicio) {
+    showAlert(alert, 'Por favor completa todos los campos del término.', 'error');
+    return;
+  }
+  const dias = parseInt(diasStr);
+  const vencimiento = addBusinessDays(inicio, dias);
+  terminos.push({ accion, dias, inicio, vencimiento });
+  renderTerminos();
+
+  document.getElementById('new-term-accion').value = '';
+  document.getElementById('new-term-dias').value = '';
+  toggleAddTerm();
+  alert.classList.remove('show');
+}
+
+// ── DÍAS INHÁBILES TABLE ────────────────────────────────────────────────────────
+function renderInhabilesTable() {
+  const tbody = document.getElementById('inhabiles-body');
+  tbody.innerHTML = INHABILES_2026_RAW.map(r => {
+    const diasStr = r.dias.length > 5
+      ? `${r.dias[0]} al ${r.dias[r.dias.length-1]}`
+      : r.dias.join(', ');
+    return `<tr>
+      <td>${r.mes}</td>
+      <td>${diasStr}</td>
+      <td style="font-size:11px">${r.fundamento}</td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleInhabiles() {
+  const t = document.getElementById('inhabiles-table');
+  t.style.display = t.style.display === 'none' ? 'block' : 'none';
+}
+
+// ── FILE UPLOAD ────────────────────────────────────────────────────────────────
+document.getElementById('pdf-input').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  handleFile(file);
+});
+
+const zone = document.getElementById('upload-zone');
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+zone.addEventListener('drop', e => {
+  e.preventDefault(); zone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+
+function handleFile(file) {
+  pdfFile = file;
+  document.getElementById('fname-label').textContent = file.name;
+  document.getElementById('fsize-label').textContent = (file.size/1024).toFixed(1) + ' KB';
+  document.getElementById('file-info').classList.add('show');
+  document.getElementById('analyze-btn').disabled = false;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    pdfBase64 = e.target.result.split(',')[1];
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeFile() {
+  pdfFile = null; pdfBase64 = null;
+  document.getElementById('pdf-input').value = '';
+  document.getElementById('file-info').classList.remove('show');
+  document.getElementById('analyze-btn').disabled = true;
+  document.getElementById('ai-result').classList.remove('show');
+}
+
+// ── AI ANALYSIS ────────────────────────────────────────────────────────────────
+async function analyzePDF() {
+  if (!pdfBase64) return;
+  const btn = document.getElementById('analyze-btn');
+  const loader = document.getElementById('ai-loader');
+  const alert = document.getElementById('ai-alert');
+  const result = document.getElementById('ai-result');
+
+  btn.disabled = true;
+  loader.classList.add('show');
+  result.classList.remove('show');
+  alert.classList.remove('show');
+
+  const isImage = pdfFile.type.startsWith('image/');
+  const mediaType = isImage ? pdfFile.type : 'application/pdf';
+
+  const systemPrompt = `Eres un asistente jurídico especializado en derecho mexicano. 
+Analiza la cédula de notificación judicial y extrae los datos en formato JSON puro, sin texto adicional, sin backticks.
+El JSON debe tener exactamente esta estructura:
+{
+  "expediente": "número de expediente",
+  "juzgado": "nombre del juzgado o tribunal",
+  "cliente": "nombre de la parte notificada (a quien va dirigida la cédula)",
+  "posicion": "Parte Actora|Parte Demandada|Tercero Interesado|Tercero Perjudicado|Quejoso|Autoridad Responsable",
+  "cedula_fecha": "YYYY-MM-DD o null",
+  "notificacion_fecha": "YYYY-MM-DD o null",
+  "actuacion": "descripción breve del acuerdo o resolución notificada",
+  "materia": "Amparo|Civil|Laboral|Mercantil|Administrativo|Familiar|Penal|Corporativo o null",
+  "terminos": [
+    {
+      "accion": "descripción de lo que se solicita",
+      "dias": numero_de_dias_habiles,
+      "tipo": "hábiles"
+    }
+  ]
+}
+Si no encuentras un dato, usa null. Para términos, solo incluye los que estén EXPLÍCITAMENTE mencionados en el documento con plazo específico. Si no hay términos explícitos, usa array vacío.`;
+
+  try {
+    const msgContent = [
+      {
+        type: isImage ? 'image' : 'document',
+        source: { type: 'base64', media_type: mediaType, data: pdfBase64 }
+      },
+      { type: 'text', text: 'Analiza esta cédula de notificación y extrae los datos en el formato JSON indicado.' }
+    ];
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+          'Content-Type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: msgContent }]
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.error) throw new Error(data.error.message);
+
+    const raw = data.content.map(b => b.text || '').join('');
+    const clean = raw.replace(/```json|```/g, '').trim();
+    aiData = JSON.parse(clean);
+
+    renderAIResult(aiData);
+    result.classList.add('show');
+    showAlert(alert, '✦ Análisis completado. Revisa los datos y presiona "Aplicar" para usarlos.', 'success');
+
+  } catch(err) {
+    showAlert(alert, `Error al analizar: ${err.message}. Puedes ingresar los datos manualmente en el paso 2.`, 'error');
+  } finally {
+    loader.classList.remove('show');
+    btn.disabled = false;
+  }
+}
+
+function renderAIResult(data) {
+  const c = document.getElementById('ai-result-content');
+  const rows = [
+    ['Expediente', data.expediente],
+    ['Juzgado', data.juzgado],
+    ['Cliente', data.cliente],
+    ['Posición', data.posicion],
+    ['Fecha de cédula', data.cedula_fecha ? formatDate(data.cedula_fecha) : null],
+    ['Fecha notificación', data.notificacion_fecha ? formatDate(data.notificacion_fecha) : null],
+    ['Actuación', data.actuacion],
+    ['Materia', data.materia],
+  ].filter(r => r[1]);
+
+  let html = `<table class="info-table">`;
+  rows.forEach(([k,v]) => {
+    html += `<tr><td>${k}</td><td>${v}</td></tr>`;
+  });
+  html += `</table>`;
+
+  if (data.terminos && data.terminos.length) {
+    html += `<p style="font-size:12px;font-weight:700;color:var(--navy);margin:12px 0 6px;text-transform:uppercase;letter-spacing:.5px">Términos detectados:</p>`;
+    data.terminos.forEach(t => {
+      html += `<div style="font-size:13px;padding:7px 10px;background:#fff;border-radius:6px;margin-bottom:5px;border-left:3px solid var(--gold)">
+        <strong>${t.dias} días hábiles</strong> · ${t.accion}
+      </div>`;
+    });
+  } else {
+    html += `<p style="font-size:12px;color:var(--muted);margin-top:8px">No se detectaron términos explícitos. Puedes agregarlos manualmente en el paso 3.</p>`;
+  }
+
+  c.innerHTML = html;
+}
+
+function applyAIData() {
+  if (!aiData) return;
+  const set = (id, val) => { if (val) document.getElementById(id).value = val; };
+
+  set('exp-numero', aiData.expediente);
+  set('exp-juzgado', aiData.juzgado);
+  set('exp-cliente', aiData.cliente);
+  set('cedula-fecha', aiData.cedula_fecha);
+  set('notif-fecha', aiData.notificacion_fecha);
+  set('exp-actuacion', aiData.actuacion);
+
+  if (aiData.posicion) {
+    const sel = document.getElementById('exp-posicion');
+    for (let o of sel.options) {
+      if (o.value === aiData.posicion || o.text.includes(aiData.posicion)) {
+        sel.value = o.value; break;
+      }
+    }
+  }
+  if (aiData.materia) {
+    const sel = document.getElementById('exp-materia');
+    for (let o of sel.options) {
+      if (o.text === aiData.materia) { sel.value = o.value; break; }
+    }
+  }
+
+  // Apply terms
+  if (aiData.terminos && aiData.terminos.length) {
+    const inicio = aiData.notificacion_fecha || aiData.cedula_fecha;
+    if (inicio) {
+      terminos = [];
+      aiData.terminos.forEach(t => {
+        if (t.dias && t.accion) {
+          const vencimiento = addBusinessDays(inicio, t.dias);
+          terminos.push({ accion: t.accion, dias: t.dias, inicio, vencimiento });
+        }
+      });
+    }
+  }
+
+  goToStep(2);
+}
+
+// ── PREVIEW ────────────────────────────────────────────────────────────────────
+function buildPreviewAndGo() {
+  const numero = document.getElementById('exp-numero').value.trim();
+  const cliente = document.getElementById('exp-cliente').value.trim();
+  const abogado = document.getElementById('exp-abogado').value;
+
+  if (!numero || !cliente || !abogado) {
+    alert('Por favor completa al menos: Número de expediente, Cliente y Abogado responsable.');
+    return;
+  }
+
+  buildPreview();
+  goToStep(5);
+}
+
+function buildPreview() {
+  const numero    = document.getElementById('exp-numero').value.trim();
+  const juzgado   = document.getElementById('exp-juzgado').value.trim();
+  const cliente   = document.getElementById('exp-cliente').value.trim();
+  const posicion  = document.getElementById('exp-posicion').value;
+  const cFecha    = document.getElementById('cedula-fecha').value;
+  const nFecha    = document.getElementById('notif-fecha').value;
+  const actuacion = document.getElementById('exp-actuacion').value.trim();
+  const abogado   = document.getElementById('exp-abogado').value;
+  const materia   = document.getElementById('exp-materia').value;
+  const obs       = document.getElementById('exp-obs').value.trim();
+
+  // Recipients
+  const toList = [];
+  selectedRecipients.forEach(i => {
+    ABOGADOS[i].emails.forEach(e => toList.push(e));
+  });
+  document.getElementById('prev-to').textContent = toList.join(', ');
+
+  const asunto = `[SCI] Notificación · Exp. ${numero} · ${cliente}`;
+  document.getElementById('prev-subject').textContent = asunto;
+
+  // Terms sorted by urgency
+  const sortedTerms = [...terminos].sort((a,b) => diasRestantes(a.vencimiento) - diasRestantes(b.vencimiento));
+
+  let termsHTML = '';
+  if (sortedTerms.length) {
+    termsHTML = `<div style="margin-top:20px">
+      <p style="font-size:13px;font-weight:700;color:#0f1c2e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;border-bottom:2px solid #f0eade;padding-bottom:8px">⏱ Términos y Plazos</p>`;
+    sortedTerms.forEach(t => {
+      const dr = diasRestantes(t.vencimiento);
+      const urg = urgenciaLabel(dr);
+      const colors = {urgente:'#c0392b', moderado:'#c0550a', normal:'#1a6b4a'};
+      const bgs = {urgente:'#fdecea', moderado:'#fef0e7', normal:'#e8f5ee'};
+      termsHTML += `<div style="background:#f8f4ee;border-radius:6px;padding:10px 14px;margin-bottom:8px;border-left:3px solid ${colors[urg.cls]}">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+          <span style="font-size:14px;font-weight:500;color:#0f1c2e">${t.accion}</span>
+          <span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;background:${bgs[urg.cls]};color:${colors[urg.cls]}">${urg.txt}</span>
+        </div>
+        <div style="margin-top:6px;font-size:12px;color:#6b7280">
+          ${t.dias} días hábiles · Vence: <strong style="color:#0f1c2e">${formatDate(t.vencimiento)}</strong>
+        </div>
+      </div>`;
+    });
+    termsHTML += '</div>';
+  } else {
+    termsHTML = `<p style="font-size:13px;color:#6b7280;margin-top:16px;font-style:italic">No se registraron términos para este asunto.</p>`;
+  }
+
+  const fileName = pdfFile ? pdfFile.name : 'cédula.pdf';
+
+  const bodyHTML = `
+    <h2 style="font-family:'Playfair Display',serif;color:#0f1c2e;margin-bottom:4px">Notificación Judicial</h2>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:20px">SCI Despacho Jurídico · Villahermosa, Tabasco</p>
+    
+    <table style="width:100%;border-collapse:collapse;margin-bottom:4px">
+      ${row('No. Expediente', numero)}
+      ${row('Juzgado / Tribunal', juzgado || '—')}
+      ${row('Cliente', cliente)}
+      ${posicion ? row('Posición procesal', posicion) : ''}
+      ${materia ? row('Materia', materia) : ''}
+      ${row('Abogado responsable', abogado)}
+      ${cFecha ? row('Fecha de cédula', formatDate(cFecha)) : ''}
+      ${nFecha ? row('Fecha de notificación', formatDate(nFecha)) : ''}
+      ${actuacion ? row('Actuación notificada', actuacion) : ''}
+    </table>
+
+    ${termsHTML}
+
+    ${obs ? `<div style="margin-top:16px;background:#f0eade;border-radius:8px;padding:14px">
+      <p style="font-size:12px;font-weight:700;color:#0f1c2e;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Observaciones</p>
+      <p style="font-size:13px;color:#1a1a2e">${obs}</p>
+    </div>` : ''}
+
+    <p style="margin-top:24px;font-size:12px;color:#6b7280;border-top:1px solid #f0eade;padding-top:14px">
+      📎 Se adjunta la cédula de notificación: <strong>${fileName}</strong><br>
+      <em>Este mensaje fue generado por el sistema de notificaciones de SCI Despacho Jurídico. Favor de verificar los datos antes de actuar.</em>
+    </p>`;
+
+  document.getElementById('prev-body-html').innerHTML = bodyHTML;
+}
+
+function row(label, val) {
+  if (!val || val === '—') return '';
+  return `<tr>
+    <td style="padding:8px 12px;font-weight:600;color:#0f1c2e;width:160px;background:#f8f4ee;font-size:13px;border-bottom:1px solid #f0eade">${label}</td>
+    <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f0eade">${val}</td>
+  </tr>`;
+}
+
+// ── SEND EMAIL ─────────────────────────────────────────────────────────────────
+function sendEmail() {
+  const numero    = document.getElementById('exp-numero').value.trim();
+  const cliente   = document.getElementById('exp-cliente').value.trim();
+  const juzgado   = document.getElementById('exp-juzgado').value.trim();
+  const posicion  = document.getElementById('exp-posicion').value;
+  const cFecha    = document.getElementById('cedula-fecha').value;
+  const nFecha    = document.getElementById('notif-fecha').value;
+  const actuacion = document.getElementById('exp-actuacion').value.trim();
+  const abogado   = document.getElementById('exp-abogado').value;
+  const materia   = document.getElementById('exp-materia').value;
+  const obs       = document.getElementById('exp-obs').value.trim();
+
+  const toList = [];
+  selectedRecipients.forEach(i => {
+    ABOGADOS[i].emails.forEach(e => toList.push(e));
+  });
+
+  const subject = encodeURIComponent(`[SCI] Notificación · Exp. ${numero} · ${cliente}`);
+
+  let body = `NOTIFICACIÓN JUDICIAL — SCI DESPACHO JURÍDICO\n`;
+  body += `${'═'.repeat(50)}\n\n`;
+  body += `Expediente:          ${numero}\n`;
+  if (juzgado)   body += `Juzgado/Tribunal:    ${juzgado}\n`;
+  body += `Cliente:             ${cliente}\n`;
+  if (posicion)  body += `Posición procesal:   ${posicion}\n`;
+  if (materia)   body += `Materia:             ${materia}\n`;
+  body += `Abogado responsable: ${abogado}\n`;
+  if (cFecha)    body += `Fecha de cédula:     ${formatDate(cFecha)}\n`;
+  if (nFecha)    body += `Fecha notificación:  ${formatDate(nFecha)}\n`;
+  if (actuacion) body += `Actuación:           ${actuacion}\n`;
+
+  if (terminos.length) {
+    body += `\n${'─'.repeat(50)}\nTÉRMINOS Y PLAZOS\n${'─'.repeat(50)}\n`;
+    const sorted = [...terminos].sort((a,b) => diasRestantes(a.vencimiento) - diasRestantes(b.vencimiento));
+    sorted.forEach(t => {
+      const dr = diasRestantes(t.vencimiento);
+      const urg = urgenciaLabel(dr);
+      body += `\n▸ ${t.accion}\n`;
+      body += `  ${t.dias} días hábiles\n`;
+      body += `  Vence: ${formatDate(t.vencimiento)} [${urg.txt}]\n`;
+    });
+  }
+
+  if (obs) {
+    body += `\n${'─'.repeat(50)}\nOBSERVACIONES\n${'─'.repeat(50)}\n${obs}\n`;
+  }
+
+  body += `\n${'═'.repeat(50)}\n`;
+  body += `AVISO: Se adjunta la cédula de notificación en PDF.\n`;
+  body += `Por favor verificar los datos antes de actuar.\n`;
+  body += `— Sistema de Notificaciones SCI Despacho Jurídico\n`;
+
+  const mailto = `mailto:${toList.join(',')}?subject=${subject}&body=${encodeURIComponent(body)}`;
+  window.location.href = mailto;
+
+  document.getElementById('sent-alert').classList.add('show');
+}
+
+// ── NAVIGATION ─────────────────────────────────────────────────────────────────
+function goToStep(n) {
+  for (let i = 1; i <= 5; i++) {
+    const page = document.getElementById(`page${i}`);
+    const tab = document.getElementById(`step${i}-tab`);
+    page.classList.toggle('active', i === n);
+    tab.classList.remove('active','done');
+    if (i === n) tab.classList.add('active');
+    else if (i < n) tab.classList.add('done');
+  }
+  currentStep = n;
+  window.scrollTo({top:0, behavior:'smooth'});
+
+  if (n === 3) renderTerminos();
+  if (n === 4) renderRecipients();
+}
+
+// ── HELPERS ────────────────────────────────────────────────────────────────────
+function showAlert(el, msg, type) {
+  el.textContent = msg;
+  el.className = `alert ${type} show`;
+  setTimeout(() => el.classList.remove('show'), 6000);
+}
+
+// ── INIT ───────────────────────────────────────────────────────────────────────
+renderInhabilesTable();
+renderTerminos();
+renderRecipients();
+</script>
+</body>
+</html>
