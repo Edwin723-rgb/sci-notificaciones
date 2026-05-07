@@ -352,6 +352,19 @@
   .login-card p { font-size: 13px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
   .login-error { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 1.2em; }
   .login-hint { font-size: 11px; color: var(--muted); margin-top: 16px; line-height: 1.45; }
+  .login-client-row { margin-bottom: 16px; text-align: left; }
+  .login-client-row label { display: block; font-size: 12px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
+  .login-client-row input {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    font-family: ui-monospace, Consolas, monospace; font-size: 11px; box-sizing: border-box;
+  }
+  .login-client-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .login-client-actions button {
+    flex: 1; min-width: 100px; padding: 9px 12px; border-radius: 8px; cursor: pointer;
+    font-family: inherit; font-size: 12px; font-weight: 600; border: 1px solid var(--border);
+    background: var(--cream2); color: var(--navy);
+  }
+  .login-client-actions button.primary { background: var(--navy); color: #fff; border-color: var(--navy); }
   header .header-inner { flex: 1; min-width: 0; }
   #header-session {
     margin-left: auto; display: none; align-items: center; gap: 10px;
@@ -366,13 +379,21 @@
 <div id="login-gate" class="login-gate" aria-live="polite">
   <div class="login-card">
     <h2>Acceso al sistema</h2>
-    <p>Inicia sesión con la cuenta Google autorizada del despacho. El envío de notificaciones saldrá desde tu Gmail.</p>
+    <p>Inicia sesión con la cuenta Google autorizada del despacho. El envío saldrá desde tu Gmail.</p>
+    <div class="login-client-row">
+      <label for="oauth-client-id">Client ID de Google (OAuth · aplicación web)</label>
+      <input type="text" id="oauth-client-id" placeholder="ej. 123456789-xxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+      <div class="login-client-actions">
+        <button type="button" class="primary" id="btn-save-client-id">Guardar en este navegador</button>
+        <button type="button" id="btn-clear-client-id">Quitar guardado</button>
+      </div>
+    </div>
     <button type="button" class="ai-btn" id="btn-google-login" style="width:100%">Iniciar sesión con Google</button>
     <p id="login-error" class="login-error"></p>
     <p class="login-hint">
-      Configura tu <strong>Client ID OAuth</strong> en la variable <code>window.__SCI_GOOGLE_CLIENT_ID__</code> (script al final de la página).
-      En Google Cloud: APIs → Gmail API; Credenciales → ID de cliente OAuth &quot;Aplicación web&quot;; orígenes: tu dominio Vercel y <code>http://localhost</code>.
-      Prueba: usuarios de prueba si la app está en modo prueba.
+      <strong>Paso 1:</strong> en <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a> crea un ID de cliente OAuth tipo &quot;Aplicación web&quot;, activa <strong>Gmail API</strong>, y en &quot;Orígenes JavaScript autorizados&quot; agrega tu URL de Vercel y <code>http://localhost</code>. Copia el Client ID y pégalo arriba → Guardar.<br>
+      <strong>Paso 2:</strong> si la app está en modo prueba, añade tu correo como usuario de prueba en la pantalla de consentimiento OAuth.<br>
+      Opcional: también puedes pegar el ID en el código (<code>window.__SCI_GOOGLE_CLIENT_ID__</code>) o abrir la página con <code>?client_id=TU_ID</code>.
     </p>
   </div>
 </div>
@@ -754,8 +775,60 @@ let tokenClient = null;
 let gmailAccessToken = null;
 
 function getGoogleClientId() {
-  const v = window.__SCI_GOOGLE_CLIENT_ID__;
-  return typeof v === 'string' && v.trim() ? v.trim() : '';
+  const w = window.__SCI_GOOGLE_CLIENT_ID__;
+  if (typeof w === 'string' && w.trim()) return w.trim();
+  try {
+    const q = new URLSearchParams(window.location.search).get('client_id');
+    if (q && q.trim()) return q.trim();
+  } catch (e) {}
+  try {
+    const ls = localStorage.getItem('sci_oauth_client_id');
+    if (ls && ls.trim()) return ls.trim();
+  } catch (e) {}
+  return '';
+}
+
+function saveOAuthClientIdFromInput() {
+  const errEl = document.getElementById('login-error');
+  const inp = document.getElementById('oauth-client-id');
+  if (errEl) errEl.textContent = '';
+  if (!inp) return;
+  let v = inp.value.trim();
+  if (!v) {
+    if (errEl) errEl.textContent = 'Pega el Client ID que termina en .apps.googleusercontent.com';
+    return;
+  }
+  if (!/\.apps\.googleusercontent\.com$/i.test(v)) {
+    if (errEl) errEl.textContent = 'El Client ID debe terminar en .apps.googleusercontent.com';
+    return;
+  }
+  try {
+    localStorage.setItem('sci_oauth_client_id', v);
+  } catch (e) {
+    if (errEl) errEl.textContent = 'No se pudo guardar (bloqueo de cookies/almacenamiento).';
+    return;
+  }
+  tokenClient = null;
+  initGoogleTokenClient();
+  if (errEl) errEl.textContent = '✓ Guardado. Ahora pulsa «Iniciar sesión con Google».';
+}
+
+function clearSavedOAuthClientId() {
+  try {
+    localStorage.removeItem('sci_oauth_client_id');
+  } catch (e) {}
+  const inp = document.getElementById('oauth-client-id');
+  if (inp) inp.value = '';
+  tokenClient = null;
+  const errEl = document.getElementById('login-error');
+  if (errEl) errEl.textContent = 'Client ID eliminado de este navegador.';
+}
+
+function prefillOAuthClientIdInput() {
+  const inp = document.getElementById('oauth-client-id');
+  if (!inp) return;
+  const cid = getGoogleClientId();
+  if (cid && !inp.value.trim()) inp.value = cid;
 }
 
 function showLoginGate() {
@@ -833,7 +906,7 @@ function startGoogleLogin() {
   errEl.textContent = '';
   const cid = getGoogleClientId();
   if (!cid) {
-    errEl.textContent = 'Configura window.__SCI_GOOGLE_CLIENT_ID__ con tu Client ID OAuth (Google Cloud).';
+    errEl.textContent = 'Pega tu Client ID arriba (termina en .apps.googleusercontent.com) y pulsa «Guardar en este navegador».';
     return;
   }
   if (!tokenClient) initGoogleTokenClient();
@@ -1895,7 +1968,7 @@ async function sendEmail() {
 
   const cid = getGoogleClientId();
   if (!cid) {
-    alert('Configura window.__SCI_GOOGLE_CLIENT_ID__ con tu Client ID OAuth en Google Cloud (tipo aplicación web). Luego recarga.');
+    alert('Configura el Client ID: pégalo en la pantalla de acceso y pulsa Guardar, o añádelo en el código (window.__SCI_GOOGLE_CLIENT_ID__).');
     return;
   }
 
@@ -1984,6 +2057,16 @@ document.getElementById('cedula-fecha').addEventListener('change', recalcularTer
 document.getElementById('notif-fecha').addEventListener('change', recalcularTerminosPlazos);
 
 document.getElementById('btn-google-login').addEventListener('click', startGoogleLogin);
+document.getElementById('btn-save-client-id').addEventListener('click', saveOAuthClientIdFromInput);
+document.getElementById('btn-clear-client-id').addEventListener('click', clearSavedOAuthClientId);
+try {
+  const q = new URLSearchParams(window.location.search).get('client_id');
+  if (q && q.trim() && /\.apps\.googleusercontent\.com$/i.test(q.trim())) {
+    localStorage.setItem('sci_oauth_client_id', q.trim());
+    history.replaceState({}, '', window.location.pathname + window.location.hash);
+  }
+} catch (ignore) {}
+prefillOAuthClientIdInput();
 whenGsiReady(function () {
   initGoogleTokenClient();
   if (!tryRestoreSession()) showLoginGate();
