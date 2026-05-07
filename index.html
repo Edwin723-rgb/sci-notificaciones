@@ -442,7 +442,7 @@
         </div>
         <div class="field span2">
           <label>Actuación / Acuerdo notificado</label>
-          <textarea id="exp-actuacion" rows="5" placeholder="Acuerdo, puntos resolutivos (PRIMERO, SEGUNDO…), autos relevantes"></textarea>
+          <textarea id="exp-actuacion" rows="5" placeholder="Resumen del acuerdo (p. ej. señalamiento de audiencia); puede ajustar el texto"></textarea>
         </div>
         <div class="field">
           <label>Abogado Responsable <span class="req">*</span></label>
@@ -956,6 +956,45 @@ function toIsoDate(d, m, y) {
 /**
  * Reglas sobre texto plano y saltos de línea (cédulas mexicanas, OCR).
  */
+function cleanRazonSocial(s) {
+  if (!s) return null;
+  return s.replace(/\s+/g, ' ').trim().replace(/^[,\s:;.]+|[,\s:;.]+$/g, '').slice(0, 200);
+}
+
+/** Persona moral / razón social: prioridad sobre nombres de actuario o apoderados. */
+function extractClientePersonaMoral(flat) {
+  let m = flat.match(/persona\s+moral\s+denominad[ao]\s+([^\n,]{8,220}?)(?=,?\s+lo cual|,?\s+la cual|,?\s+el cual|,\s*el cual|\.?\s+cual\s+fue)/i);
+  if (m) {
+    const r = cleanRazonSocial(m[1]);
+    if (r) return r;
+  }
+  m = flat.match(/denominad[ao]\s+([A-ZÁÉÍÓÚÑ0-9][A-Za-záéíóúñÑ0-9\s\.\-]{5,130}S\.?\s*A\.?\s*DE\s*C\.?\s*V\.?)/i);
+  if (m) return cleanRazonSocial(m[1]);
+  m = flat.match(/\b(FRAGUA\s+SOLUCIONES\s+S\.?\s*A\.?\s*DE\s*C\.?\s*V\.?)\b/i);
+  if (m) return m[1].replace(/\s+/g, ' ').trim();
+  m = flat.match(/\b(FRAGUA\s+SOLUCIONES)\b/i);
+  if (m) return m[1].replace(/\s+/g, ' ').trim();
+  return null;
+}
+
+/** Evita tomar como cliente al actuario, licenciada/o de oficina, etc., si hay empresa en el texto. */
+function shouldSkipClienteHeuristic(q, flat) {
+  if (!q) return true;
+  const f = flat.toLowerCase();
+  const ql = q.toLowerCase();
+  if (/persona\s+moral|fragua|s\.\s*a\.\s*de\s*c\.\s*v/i.test(flat)) {
+    if (!/fragua|s\.\s*a\.|persona\s+moral|denominad/i.test(q) && q.length < 55) return true;
+  }
+  if (/licenciad[ao]\s+/.test(flat)) {
+    const first = ql.split(/\s+/)[0];
+    if (first.length > 2 && new RegExp('licenciad[ao][^.]{0,140}\\b' + first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(flat)) return true;
+  }
+  if (/secretar[io][a]?.{0,40}oficial\s+de\s+partes/i.test(flat) && q.length < 60) {
+    if (new RegExp('secretar|oficial\\s+de\\s+partes[^.]{0,120}' + ql.split(/\s+/)[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(flat)) return true;
+  }
+  return false;
+}
+
 function cleanClienteCandidate(s) {
   if (!s) return null;
   let t = s.replace(/\s+/g, ' ').trim();
@@ -969,8 +1008,10 @@ function cleanClienteCandidate(s) {
 }
 
 function extractClienteFromText(raw, flat) {
+  const pm = extractClientePersonaMoral(flat);
+  if (pm) return pm;
+
   const patterns = [
-    /persona\s+moral\s+denominad[ao]\s+([^\n]{8,220}?)(?=,?\s+lo cual|,?\s+la cual|,?\s+el cual|\.?\s+cual\s+fue)/i,
     /notif(?:ica|ique|íquese|ícase|iquese)\s+(?:a|al|a\s+la|personalmente\s+a)\s+([^\n.;]{8,140})/i,
     /notificad[ao]s?\s*(?:a|al)\s*[:\s]+([^\n.;]{8,140})/i,
     /parte\s+notificada\s*[:\s]+([^\n.;]{8,140})/i,
@@ -991,10 +1032,10 @@ function extractClienteFromText(raw, flat) {
     const m = raw.match(patterns[i]) || flat.match(patterns[i]);
     if (!m || !m[1]) continue;
     const q = cleanClienteCandidate(m[1]);
-    const bonus = i === 0 ? 320 : 0;
-    if (q && q.length + bonus > bestLen) {
+    if (!q || shouldSkipClienteHeuristic(q, flat)) continue;
+    if (q.length > bestLen) {
       best = q;
-      bestLen = q.length + bonus;
+      bestLen = q.length;
     }
   }
   return best;
@@ -1023,9 +1064,60 @@ function extractActuacionFromPrimeroSegundo(raw, flat) {
   return null;
 }
 
+function extractActuacionClave(flat, raw) {
+  const norm = function (s) {
+    return s.replace(/\r\n/g, ' ').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+  const sources = [flat, norm(raw)];
+  const pats = [
+    /se\s+se[nñ]alan\s+las\s+[^.]+\./i,
+    /se\s+se[nñ]alan\s+[^.]{18,380}\./i,
+    /se\s+fijan\s+las\s+[^.]+\./i,
+    /se\s+fija[n]?\s+[^.]{12,220}para\s+que\s+se\s+lleve\s+a\s+cabo[^.]+\./i,
+    /se\s+ordena\s+la\s+reanudación[^.]+\./i,
+    /para\s+que\s+se\s+lleve\s+a\s+cabo\s+la\s+audiencia[^.]+\./i,
+    /audiencia\s+de\s+[^.]{5,80}[^.]{10,200}\./i
+  ];
+  for (let s = 0; s < sources.length; s++) {
+    const text = sources[s];
+    if (!text || text.length < 25) continue;
+    for (let i = 0; i < pats.length; i++) {
+      const mm = text.match(pats[i]);
+      if (mm && mm[0].replace(/\s+/g, ' ').trim().length >= 22) {
+        return mm[0].replace(/\s+/g, ' ').trim().slice(0, 400);
+      }
+    }
+    const seg = text.match(/\bSEGUNDO\.?\s*([^.]{35,420}\.)/i);
+    if (seg && /se[nñ]al|senal|audiencia|horas|comparenc|incidental/i.test(seg[1])) {
+      return seg[1].replace(/\s+/g, ' ').trim().slice(0, 400);
+    }
+  }
+  return extractActuacionPrimeroKeywordSentence(raw, flat);
+}
+
+function extractActuacionPrimeroKeywordSentence(raw, flat) {
+  const long = extractActuacionFromPrimeroSegundo(raw, flat);
+  if (!long) return null;
+  const parts = long.split(/\.\s+/);
+  for (let j = 0; j < parts.length; j++) {
+    const st = parts[j].replace(/\s+/g, ' ').trim();
+    if (/se[nñ]al|senal|audiencia|reanudación|ordena\s+la|fijan\s+las|horas\s+del|lleve\s+a\s+cabo|incidental/i.test(st) && st.length > 32) {
+      return (st + (st.endsWith('.') ? '' : '.')).slice(0, 400);
+    }
+  }
+  if (parts.length) {
+    const st0 = parts[parts.length - 1].replace(/\s+/g, ' ').trim();
+    if (st0.length > 35) return (st0 + (st0.endsWith('.') ? '' : '.')).slice(0, 400);
+  }
+  return null;
+}
+
 function extractActuacionFromText(raw, flat) {
+  const clave = extractActuacionClave(flat, raw);
+  if (clave) return clave;
+
   const puntos = extractActuacionFromPrimeroSegundo(raw, flat);
-  if (puntos) return puntos;
+  if (puntos) return puntos.slice(0, 450);
 
   const rawN = raw.replace(/\r\n/g, '\n');
   const blocks = [
