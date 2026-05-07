@@ -391,7 +391,8 @@
     <button type="button" class="ai-btn" id="btn-google-login" style="width:100%">Iniciar sesión con Google</button>
     <p id="login-error" class="login-error"></p>
     <p class="login-hint">
-      <strong>Paso 1:</strong> en <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a> crea un ID de cliente OAuth tipo &quot;Aplicación web&quot;, activa <strong>Gmail API</strong>, y en &quot;Orígenes JavaScript autorizados&quot; agrega tu URL de Vercel y <code>http://localhost</code>. Copia el Client ID y pégalo arriba → Guardar.<br>
+      <strong>Paso 1:</strong> en <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a> crea un ID de cliente OAuth tipo &quot;Aplicación web&quot;, activa en el mismo proyecto <strong>Gmail API</strong> y <strong>Google Calendar API</strong>, y en &quot;Orígenes JavaScript autorizados&quot; agrega tu URL de Vercel y <code>http://localhost</code>. Copia el Client ID y pégalo arriba → Guardar.<br>
+      Tras actualizar permisos (Calendar), usa <strong>Cerrar sesión</strong> y vuelve a entrar una vez para autorizar todo.<br>
       <strong>Paso 2:</strong> si la app está en modo prueba, añade tu correo como usuario de prueba en la pantalla de consentimiento OAuth.<br>
       Opcional: también puedes pegar el ID en el código (<code>window.__SCI_GOOGLE_CLIENT_ID__</code>) o abrir la página con <code>?client_id=TU_ID</code>.
     </p>
@@ -650,6 +651,12 @@
           <div id="prev-body-html"></div>
         </div>
       </div>
+      <div style="margin-top:18px;padding:14px 16px;background:var(--cream2);border-radius:10px;border:1px solid var(--border);max-width:720px">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:13px;color:var(--navy);line-height:1.45">
+          <input type="checkbox" id="opt-calendar-events" checked style="margin-top:4px;flex-shrink:0">
+          <span><strong>Google Calendar:</strong> después del correo, crear en tu calendario un evento por cada <strong>vencimiento de plazo</strong> (día completo) e invitar por correo a <strong>todas las personas seleccionadas</strong> en el paso 4 (Google envía la invitación). Si no hay plazos calculados pero sí fecha de notificación, se crea un recordatorio ese día.</span>
+        </label>
+      </div>
     </div>
     <div class="nav-btns" style="flex-wrap:wrap">
       <button class="ai-btn secondary" onclick="goToStep(4)">← Editar</button>
@@ -770,7 +777,11 @@ function urgenciaLabel(dias) {
 }
 
 // ── GOOGLE LOGIN + Gmail API ─────────────────────────────────────────────────
-const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email';
+const GOOGLE_OAUTH_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/calendar.events'
+].join(' ');
 let tokenClient = null;
 let gmailAccessToken = null;
 
@@ -877,7 +888,7 @@ function initGoogleTokenClient() {
   if (!cid || !window.google || !google.accounts || !google.accounts.oauth2) return;
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: cid,
-    scope: GMAIL_SCOPES,
+    scope: GOOGLE_OAUTH_SCOPES,
     callback: function () {}
   });
 }
@@ -1064,6 +1075,121 @@ function formatGmailSendError(rawMsg) {
       + 'Mientras tanto puedes usar «Abrir en cliente de correo…».';
   }
   return 'No se pudo enviar con Gmail:\n\n' + m + '\n\nPuedes usar «Abrir en cliente de correo…» como respaldo.';
+}
+
+function formatCalendarApiError(rawMsg) {
+  const m = String(rawMsg || '');
+  if (/Calendar API has not been used|calendar-json.googleapis.com|SERVICE_DISABLED|has not been enabled/i.test(m)) {
+    const projMatch = m.match(/project\s+#?(\d+)/i) || m.match(/project\s+(\d+)/i);
+    const pid = projMatch ? projMatch[1] : '';
+    const enableUrl = pid
+      ? 'https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=' + pid
+      : 'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com';
+    return 'La Google Calendar API no está activada.\n\nActivar:\n' + enableUrl + '\n\nLuego espera unos minutos y vuelve a intentar.';
+  }
+  if (/insufficient authentication scopes|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(m)) {
+    return 'Falta permiso de Calendar. Pulsa «Cerrar sesión» arriba y vuelve a entrar con Google para autorizar Gmail y Calendar.';
+  }
+  return m;
+}
+
+function uniqueEmailList(arr) {
+  const s = new Set();
+  (arr || []).forEach(function (e) {
+    const x = String(e || '').trim().toLowerCase();
+    if (x.indexOf('@') !== -1) s.add(x);
+  });
+  return Array.from(s);
+}
+
+function calendarDayPlusOne(isoYmd) {
+  const d = new Date(isoYmd + 'T12:00:00');
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function truncateEs(s, max) {
+  s = String(s || '').replace(/\s+/g, ' ').trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + '…';
+}
+
+async function calendarApiCreateEvent(accessToken, eventBody) {
+  const r = await fetch(
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + accessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(eventBody)
+    }
+  );
+  const j = await r.json().catch(function () { return {}; });
+  if (!r.ok) {
+    const msg = j.error && j.error.message ? j.error.message : r.statusText;
+    throw new Error(msg || 'Calendar API');
+  }
+  return j;
+}
+
+/**
+ * Crea eventos de día completo con invitaciones (sendUpdates=all).
+ */
+async function createSciCalendarEvents(accessToken, payload) {
+  const attendeeObjs = uniqueEmailList(payload.toList).map(function (em) { return { email: em }; });
+  if (!attendeeObjs.length) return { created: 0, note: 'sin destinatarios' };
+
+  const numero = payload.numero || '';
+  const cliente = payload.cliente || '';
+  const footer = '\n\n— SCI Notificaciones · Expediente ' + numero;
+
+  const evs = [];
+  const sorted = [...terminos].sort(function (a, b) {
+    return String(a.vencimiento).localeCompare(String(b.vencimiento));
+  });
+
+  sorted.forEach(function (t) {
+    if (!t.vencimiento) return;
+    const desc =
+      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      '\n\nPlazo: ' + t.dias + ' días hábiles\nAcción: ' + t.accion +
+      '\n\nVencimiento: ' + formatDate(t.vencimiento) + footer;
+    evs.push({
+      summary: '[SCI] Vence plazo · Exp. ' + numero + ' · ' + truncateEs(t.accion, 52),
+      description: desc,
+      start: { date: t.vencimiento },
+      end: { date: calendarDayPlusOne(t.vencimiento) },
+      attendees: attendeeObjs,
+      reminders: { useDefault: true },
+      transparency: 'opaque'
+    });
+  });
+
+  if (!evs.length && payload.nFecha) {
+    const desc =
+      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      (payload.actuacion ? '\n\nActuación: ' + payload.actuacion : '') +
+      '\n\nFecha de notificación: ' + formatDate(payload.nFecha) + footer;
+    evs.push({
+      summary: '[SCI] Notificación · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
+      description: desc,
+      start: { date: payload.nFecha },
+      end: { date: calendarDayPlusOne(payload.nFecha) },
+      attendees: attendeeObjs,
+      reminders: { useDefault: true },
+      transparency: 'opaque'
+    });
+  }
+
+  let created = 0;
+  for (let i = 0; i < evs.length; i++) {
+    await calendarApiCreateEvent(accessToken, evs[i]);
+    created++;
+    if (i < evs.length - 1) await new Promise(function (res) { setTimeout(res, 120); });
+  }
+  return { created: created };
 }
 
 // ── DESTINATARIOS ──────────────────────────────────────────────────────────────
@@ -1971,7 +2097,17 @@ function collectEmailPayload() {
     subjectPlain,
     body,
     pdfName: pdfFile ? pdfFile.name : 'cedula.pdf',
-    pdfBase64: pdfBase64
+    pdfBase64: pdfBase64,
+    numero: numero,
+    cliente: cliente,
+    juzgado: juzgado,
+    nFecha: nFecha,
+    cFecha: cFecha,
+    actuacion: actuacion,
+    obs: obs,
+    abogado: abogado,
+    materia: materia,
+    posicion: posicion
   };
 }
 
@@ -2013,7 +2149,23 @@ async function sendEmail() {
     const raw = mimeToBase64Url(mime);
     await gmailApiSend(token, raw);
 
-    sentAlert.textContent = '✅ Correo enviado desde tu cuenta Gmail.';
+    let extraCal = '';
+    const optCal = document.getElementById('opt-calendar-events');
+    if (optCal && optCal.checked) {
+      try {
+        const cr = await createSciCalendarEvents(token, payload);
+        if (cr.created > 0) {
+          extraCal = ' · ' + cr.created + ' evento(s) en Google Calendar (invitaciones al equipo).';
+        } else if (!terminos.length && !payload.nFecha) {
+          extraCal = ' · Calendar: no hay plazos ni fecha de notificación para crear eventos.';
+        }
+      } catch (calErr) {
+        const cm = calErr && calErr.message ? calErr.message : String(calErr);
+        alert('El correo sí se envió, pero Google Calendar falló:\n\n' + formatCalendarApiError(cm));
+      }
+    }
+
+    sentAlert.textContent = '✅ Correo enviado desde tu cuenta Gmail.' + extraCal;
     sentAlert.className = 'alert success show';
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
