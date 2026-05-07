@@ -853,6 +853,70 @@ function removeFile() {
 }
 
 // ── AI ANALYSIS ────────────────────────────────────────────────────────────────
+const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_MODEL_ID = 'claude-sonnet-4-20250514';
+
+function anthropicMessagesFetchHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'anthropic-dangerous-direct-browser-access': 'true'
+  };
+}
+
+/** Quita cercos tipo ```json … ``` y localiza el primer objeto JSON balanceado. */
+function extractFirstJsonObject(str) {
+  const start = str.indexOf('{');
+  if (start === -1) return str.trim();
+  let depth = 0;
+  for (let i = start; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return str.slice(start, i + 1);
+    }
+  }
+  return str.slice(start).trim();
+}
+
+function normalizeAiJsonString(s) {
+  if (s == null) return '';
+  let t = String(s).trim();
+  t = t.replace(/^\uFEFF/, '');
+  t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  t = t.replace(/```(?:json)?/gi, '').replace(/```/g, '');
+  return t.trim();
+}
+
+/**
+ * Interpreta el texto devuelto por la IA: sin x-api-key en cliente (lo inyecta el entorno en deploy).
+ * @returns {{ ok: true, data: object } | { ok: false, message: string }}
+ */
+function parseAIAssistantJson(rawText) {
+  if (rawText == null || (typeof rawText === 'string' && !rawText.trim())) {
+    return { ok: false, message: 'La IA no devolvió contenido reconocible' };
+  }
+  let candidate = normalizeAiJsonString(rawText);
+  candidate = extractFirstJsonObject(candidate);
+  try {
+    const data = JSON.parse(candidate);
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+      return { ok: false, message: 'La IA devolvió un formato inesperado (no es un objeto JSON)' };
+    }
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, message: 'No se pudo leer el JSON de la IA (respuesta incompleta o con texto extra)' };
+  }
+}
+
+function analyzeFetchErrorMessage(err) {
+  const msg = err && err.message ? String(err.message) : 'Error desconocido';
+  if (msg === 'Failed to fetch' || /NetworkError|Failed to load|Load failed|network/i.test(msg)) {
+    return 'No se pudo conectar con la API (Failed to fetch). Abre la app desde HTTPS (p. ej. la URL de Vercel), no uses file://';
+  }
+  return msg;
+}
+
 async function analyzePDF() {
   if (!pdfBase64) return;
   const btn = document.getElementById('analyze-btn');
@@ -899,34 +963,53 @@ Si no encuentras un dato, usa null. Para términos, solo incluye los que estén 
       { type: 'text', text: 'Analiza esta cédula de notificación y extrae los datos en el formato JSON indicado.' }
     ];
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: 'POST',
-      headers: {
-          'Content-Type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
+      headers: anthropicMessagesFetchHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        model: ANTHROPIC_MODEL_ID,
+        max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: 'user', content: msgContent }]
       })
     });
 
-    const data = await response.json();
+    const responseText = await response.text();
+    let data;
+    try {
+      data = responseText ? JSON.parse(responseText) : {};
+    } catch (parseErr) {
+      throw new Error('Respuesta no válida del servicio de IA.');
+    }
 
-    if (data.error) throw new Error(data.error.message);
+    if (!response.ok) {
+      const apiErr = data && data.error && data.error.message ? data.error.message : `HTTP ${response.status}`;
+      throw new Error(apiErr);
+    }
 
-    const raw = data.content.map(b => b.text || '').join('');
-    const clean = raw.replace(/```json|```/g, '').trim();
-    aiData = JSON.parse(clean);
+    if (data.error && data.error.message) {
+      throw new Error(data.error.message);
+    }
+
+    const blocks = Array.isArray(data.content) ? data.content : [];
+    const raw = blocks
+      .filter(function (b) { return b && b.type === 'text'; })
+      .map(function (b) { return b.text != null ? String(b.text) : ''; })
+      .join('');
+
+    const parsed = parseAIAssistantJson(raw);
+    if (!parsed.ok) {
+      throw new Error(parsed.message);
+    }
+
+    aiData = parsed.data;
 
     renderAIResult(aiData);
     result.classList.add('show');
     showAlert(alert, '✦ Análisis completado. Revisa los datos y presiona "Aplicar" para usarlos.', 'success');
 
-  } catch(err) {
-    showAlert(alert, `Error al analizar: ${err.message}. Puedes ingresar los datos manualmente en el paso 2.`, 'error');
+  } catch (err) {
+    showAlert(alert, 'Error al analizar: ' + analyzeFetchErrorMessage(err) + '. Puedes ingresar los datos manualmente en el paso 2.', 'error');
   } finally {
     loader.classList.remove('show');
     btn.disabled = false;
@@ -955,8 +1038,11 @@ function renderAIResult(data) {
   if (data.terminos && data.terminos.length) {
     html += `<p style="font-size:12px;font-weight:700;color:var(--navy);margin:12px 0 6px;text-transform:uppercase;letter-spacing:.5px">Términos detectados:</p>`;
     data.terminos.forEach(t => {
+      if (!t) return;
+      const dias = t.dias != null ? t.dias : '—';
+      const accion = t.accion != null ? t.accion : '—';
       html += `<div style="font-size:13px;padding:7px 10px;background:#fff;border-radius:6px;margin-bottom:5px;border-left:3px solid var(--gold)">
-        <strong>${t.dias} días hábiles</strong> · ${t.accion}
+        <strong>${dias} días hábiles</strong> · ${accion}
       </div>`;
     });
   } else {
