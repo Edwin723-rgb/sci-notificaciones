@@ -853,14 +853,18 @@ function removeFile() {
 }
 
 // ── AI ANALYSIS ────────────────────────────────────────────────────────────────
-const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL_ID = 'claude-sonnet-4-20250514';
 
-function anthropicMessagesFetchHeaders() {
-  return {
-    'Content-Type': 'application/json',
-    'anthropic-dangerous-direct-browser-access': 'true'
-  };
+/** Misma instancia en Vercel, o producción si abres el HTML por file:// */
+function anthropicMessagesEndpoint() {
+  if (location.protocol === 'https:' || location.protocol === 'http:') {
+    return location.origin + '/api/messages';
+  }
+  return 'https://sci-notificaciones.vercel.app/api/messages';
+}
+
+function messagesApiHeaders() {
+  return { 'Content-Type': 'application/json' };
 }
 
 /** Quita cercos tipo ```json … ``` y localiza el primer objeto JSON balanceado. */
@@ -889,7 +893,7 @@ function normalizeAiJsonString(s) {
 }
 
 /**
- * Interpreta el texto devuelto por la IA: sin x-api-key en cliente (lo inyecta el entorno en deploy).
+ * Interpreta el texto devuelto por la IA (el cliente llama a /api/messages; la clave vive solo en Vercel).
  * @returns {{ ok: true, data: object } | { ok: false, message: string }}
  */
 function parseAIAssistantJson(rawText) {
@@ -963,9 +967,9 @@ Si no encuentras un dato, usa null. Para términos, solo incluye los que estén 
       { type: 'text', text: 'Analiza esta cédula de notificación y extrae los datos en el formato JSON indicado.' }
     ];
 
-    const response = await fetch(ANTHROPIC_MESSAGES_URL, {
+    const response = await fetch(anthropicMessagesEndpoint(), {
       method: 'POST',
-      headers: anthropicMessagesFetchHeaders(),
+      headers: messagesApiHeaders(),
       body: JSON.stringify({
         model: ANTHROPIC_MODEL_ID,
         max_tokens: 4096,
