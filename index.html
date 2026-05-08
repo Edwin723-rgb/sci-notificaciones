@@ -1114,6 +1114,40 @@ function truncateEs(s, max) {
   return s.slice(0, max - 1) + '…';
 }
 
+function extractIsoDateFromSpanishText(text) {
+  const s = String(text || '').toLowerCase();
+  if (!s) return '';
+
+  const direct = s.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (direct) return direct[0];
+
+  const slash = s.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/);
+  if (slash) {
+    const d = Number(slash[1]);
+    const m = Number(slash[2]);
+    const y = Number(slash[3].length === 2 ? '20' + slash[3] : slash[3]);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100) {
+      return String(y) + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    }
+  }
+
+  const monthMap = {
+    enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6,
+    julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12
+  };
+  const named = s.match(/\b(\d{1,2})\s+de\s+([a-záéíóú]+)\s+de\s+(\d{4})\b/);
+  if (named) {
+    const d = Number(named[1]);
+    const monthRaw = named[2].normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const m = monthMap[monthRaw] || 0;
+    const y = Number(named[3]);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100) {
+      return String(y) + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    }
+  }
+  return '';
+}
+
 async function calendarApiCreateEvent(accessToken, eventBody) {
   const r = await fetch(
     'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
@@ -1177,6 +1211,39 @@ async function createSciCalendarEvents(accessToken, payload) {
       description: desc,
       start: { date: payload.nFecha },
       end: { date: calendarDayPlusOne(payload.nFecha) },
+      attendees: attendeeObjs,
+      reminders: { useDefault: true },
+      transparency: 'opaque'
+    });
+  }
+
+  const fechaActuacion = extractIsoDateFromSpanishText(payload.actuacion || '');
+  if (!evs.length && fechaActuacion) {
+    const desc =
+      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      '\n\nActuación señalada: ' + (payload.actuacion || 'Sin detalle') +
+      '\n\nFecha señalada: ' + formatDate(fechaActuacion) + footer;
+    evs.push({
+      summary: '[SCI] Actuación señalada · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
+      description: desc,
+      start: { date: fechaActuacion },
+      end: { date: calendarDayPlusOne(fechaActuacion) },
+      attendees: attendeeObjs,
+      reminders: { useDefault: true },
+      transparency: 'opaque'
+    });
+  }
+
+  if (!evs.length && payload.cFecha) {
+    const desc =
+      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      (payload.actuacion ? '\n\nActuación: ' + payload.actuacion : '') +
+      '\n\nNo se detectó fecha de término/notificación; se agenda recordatorio con la fecha de cédula: ' + formatDate(payload.cFecha) + footer;
+    evs.push({
+      summary: '[SCI] Recordatorio de actuación · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
+      description: desc,
+      start: { date: payload.cFecha },
+      end: { date: calendarDayPlusOne(payload.cFecha) },
       attendees: attendeeObjs,
       reminders: { useDefault: true },
       transparency: 'opaque'
@@ -2183,8 +2250,9 @@ async function sendCalendarOnly() {
     return;
   }
 
-  if (!terminos.length && !payload.nFecha) {
-    alert('No hay plazos ni fecha de notificación para crear eventos.');
+  const fechaActuacion = extractIsoDateFromSpanishText(payload.actuacion || '');
+  if (!terminos.length && !payload.nFecha && !fechaActuacion && !payload.cFecha) {
+    alert('No hay plazos ni fechas detectables para crear eventos (notificación, actuación o cédula).');
     return;
   }
 
