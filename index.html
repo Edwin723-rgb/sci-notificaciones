@@ -670,6 +670,11 @@
     <div class="alert success" id="sent-alert" style="margin-top:16px">
       ✅ Correo enviado desde tu cuenta Gmail.
     </div>
+    <div style="margin-top:8px">
+      <button type="button" class="ai-btn secondary" id="btn-open-calendar-event" onclick="openLastCreatedCalendarEvent()" style="display:none;font-size:13px">
+        🔗 Abrir evento en Google Calendar
+      </button>
+    </div>
     <div class="alert info" id="sent-alert-mailto" style="margin-top:8px">
       Se abrió tu cliente de correo. Si usas esta opción, adjunta el PDF de la cédula manualmente si hace falta.
     </div>
@@ -697,6 +702,7 @@ let aiData = null;
 let terminos = [];
 /** Plazos detectados en el texto ({ días, acción }); el vencimiento se deriva de las fechas del paso 2. */
 let terminosPlantilla = [];
+let lastCreatedCalendarEventUrl = '';
 
 // ── DÍAS INHÁBILES SCJN 2026 ───────────────────────────────────────────────────
 const INHABILES_2026_RAW = [
@@ -1251,12 +1257,33 @@ async function createSciCalendarEvents(accessToken, payload) {
   }
 
   let created = 0;
+  const links = [];
   for (let i = 0; i < evs.length; i++) {
-    await calendarApiCreateEvent(accessToken, evs[i]);
+    const createdEvent = await calendarApiCreateEvent(accessToken, evs[i]);
+    if (createdEvent && createdEvent.htmlLink) links.push(createdEvent.htmlLink);
     created++;
     if (i < evs.length - 1) await new Promise(function (res) { setTimeout(res, 120); });
   }
-  return { created: created };
+  return { created: created, links: links, firstUrl: links[0] || '' };
+}
+
+function setCalendarEventOpenButton(url) {
+  const btn = document.getElementById('btn-open-calendar-event');
+  lastCreatedCalendarEventUrl = String(url || '').trim();
+  if (!btn) return;
+  if (lastCreatedCalendarEventUrl) {
+    btn.style.display = 'inline-flex';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function openLastCreatedCalendarEvent() {
+  if (!lastCreatedCalendarEventUrl) {
+    alert('Aún no hay un evento recién creado para abrir.');
+    return;
+  }
+  window.open(lastCreatedCalendarEventUrl, '_blank', 'noopener');
 }
 
 // ── DESTINATARIOS ──────────────────────────────────────────────────────────────
@@ -2183,6 +2210,7 @@ async function sendEmail() {
   const sentMailto = document.getElementById('sent-alert-mailto');
   sentAlert.classList.remove('show');
   sentMailto.classList.remove('show');
+  setCalendarEventOpenButton('');
 
   const cid = getGoogleClientId();
   if (!cid) {
@@ -2236,6 +2264,7 @@ async function sendCalendarOnly() {
   const sentMailto = document.getElementById('sent-alert-mailto');
   sentAlert.classList.remove('show');
   sentMailto.classList.remove('show');
+  setCalendarEventOpenButton('');
 
   const cid = getGoogleClientId();
   if (!cid) {
@@ -2260,8 +2289,12 @@ async function sendCalendarOnly() {
     if (btn) { btn.disabled = true; btn.textContent = 'Agendando…'; }
     const token = await ensureFreshGmailToken();
     const cr = await createSciCalendarEvents(token, payload);
+    setCalendarEventOpenButton(cr.firstUrl);
     sentAlert.textContent = '✅ Calendar actualizado: ' + cr.created + ' evento(s) creados e invitaciones enviadas al equipo.';
     sentAlert.className = 'alert success show';
+    if (cr.firstUrl) {
+      window.open(cr.firstUrl, '_blank', 'noopener');
+    }
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     alert('No se pudo agendar en Google Calendar:\n\n' + formatCalendarApiError(msg));
@@ -2275,6 +2308,7 @@ function sendEmailMailtoFallback() {
   const subject = encodeURIComponent(payload.subjectPlain);
   const mailto = `mailto:${payload.toList.join(',')}?subject=${subject}&body=${encodeURIComponent(payload.body)}`;
   window.location.href = mailto;
+  setCalendarEventOpenButton('');
 
   document.getElementById('sent-alert').classList.remove('show');
   const sentMailto = document.getElementById('sent-alert-mailto');
