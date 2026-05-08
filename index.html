@@ -1154,6 +1154,63 @@ function extractIsoDateFromSpanishText(text) {
   return '';
 }
 
+function pad2(n) {
+  return String(Number(n) || 0).padStart(2, '0');
+}
+
+function guessYearFromPayload(payload) {
+  const yFrom = function (iso) {
+    const m = String(iso || '').match(/^(\d{4})-\d{2}-\d{2}$/);
+    return m ? Number(m[1]) : 0;
+  };
+  return yFrom(payload.nFecha) || yFrom(payload.cFecha) || new Date().getFullYear();
+}
+
+function extractIsoDateFromSpanishTextWithFallback(text, fallbackYear) {
+  const direct = extractIsoDateFromSpanishText(text);
+  if (direct) return direct;
+  const s = String(text || '').toLowerCase();
+  if (!s) return '';
+
+  const monthMap = {
+    enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6,
+    julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12
+  };
+  const namedNoYear = s.match(/\b(\d{1,2})\s+de\s+([a-záéíóú]+)\b/);
+  if (!namedNoYear) return '';
+  const d = Number(namedNoYear[1]);
+  const monthRaw = namedNoYear[2].normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const m = monthMap[monthRaw] || 0;
+  const y = Number(fallbackYear) || new Date().getFullYear();
+  if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100) {
+    return String(y) + '-' + pad2(m) + '-' + pad2(d);
+  }
+  return '';
+}
+
+function extractTimeHmFromSpanishText(text) {
+  const s = String(text || '').toLowerCase();
+  if (!s) return '';
+
+  const hm = s.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:h|hrs?|horas?)?\b/);
+  if (hm) return pad2(hm[1]) + ':' + pad2(hm[2]);
+
+  const ampm = s.match(/\b([1-9]|1[0-2])(?:[:.]([0-5]\d))?\s*(a\.?\s?m\.?|p\.?\s?m\.?)\b/);
+  if (ampm) {
+    let h = Number(ampm[1]);
+    const mm = pad2(ampm[2] || '00');
+    const isPm = /p/.test(ampm[3]);
+    if (isPm && h < 12) h += 12;
+    if (!isPm && h === 12) h = 0;
+    return pad2(h) + ':' + mm;
+  }
+
+  const atHour = s.match(/\ba\s+las\s+([01]?\d|2[0-3])\b/);
+  if (atHour) return pad2(atHour[1]) + ':00';
+
+  return '';
+}
+
 async function calendarApiCreateEvent(accessToken, eventBody) {
   const r = await fetch(
     'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
@@ -1223,21 +1280,29 @@ async function createSciCalendarEvents(accessToken, payload) {
     });
   }
 
-  const fechaActuacion = extractIsoDateFromSpanishText(payload.actuacion || '');
+  const fechaActuacion = extractIsoDateFromSpanishTextWithFallback(payload.actuacion || '', guessYearFromPayload(payload));
+  const horaActuacion = extractTimeHmFromSpanishText(payload.actuacion || '');
   if (!evs.length && fechaActuacion) {
     const desc =
       'Expediente: ' + numero + '\nCliente: ' + cliente +
       '\n\nActuación señalada: ' + (payload.actuacion || 'Sin detalle') +
-      '\n\nFecha señalada: ' + formatDate(fechaActuacion) + footer;
-    evs.push({
+      '\n\nFecha señalada: ' + formatDate(fechaActuacion) + (horaActuacion ? (' · Hora: ' + horaActuacion) : '') + footer;
+    const ev = {
       summary: '[SCI] Actuación señalada · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
       description: desc,
-      start: { date: fechaActuacion },
-      end: { date: calendarDayPlusOne(fechaActuacion) },
       attendees: attendeeObjs,
       reminders: { useDefault: true },
       transparency: 'opaque'
-    });
+    };
+    if (horaActuacion) {
+      const endHour = pad2(Math.min(23, Number(horaActuacion.slice(0, 2)) + 1));
+      ev.start = { dateTime: fechaActuacion + 'T' + horaActuacion + ':00', timeZone: 'America/Mexico_City' };
+      ev.end = { dateTime: fechaActuacion + 'T' + endHour + ':' + horaActuacion.slice(3, 5) + ':00', timeZone: 'America/Mexico_City' };
+    } else {
+      ev.start = { date: fechaActuacion };
+      ev.end = { date: calendarDayPlusOne(fechaActuacion) };
+    }
+    evs.push(ev);
   }
 
   if (!evs.length && payload.cFecha) {
@@ -2279,7 +2344,7 @@ async function sendCalendarOnly() {
     return;
   }
 
-  const fechaActuacion = extractIsoDateFromSpanishText(payload.actuacion || '');
+  const fechaActuacion = extractIsoDateFromSpanishTextWithFallback(payload.actuacion || '', guessYearFromPayload(payload));
   if (!terminos.length && !payload.nFecha && !fechaActuacion && !payload.cFecha) {
     alert('No hay plazos ni fechas detectables para crear eventos (notificación, actuación o cédula).');
     return;
