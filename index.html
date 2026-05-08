@@ -674,6 +674,9 @@
       <button type="button" class="ai-btn secondary" id="btn-open-calendar-event" onclick="openLastCreatedCalendarEvent()" style="display:none;font-size:13px">
         🔗 Abrir evento en Google Calendar
       </button>
+      <button type="button" class="ai-btn secondary" id="btn-open-local-pdf" onclick="openCurrentPdfFile()" style="display:none;font-size:13px;margin-left:8px">
+        📎 Abrir PDF cargado
+      </button>
     </div>
     <div class="alert info" id="sent-alert-mailto" style="margin-top:8px">
       Se abrió tu cliente de correo. Si usas esta opción, adjunta el PDF de la cédula manualmente si hace falta.
@@ -1240,6 +1243,11 @@ async function createSciCalendarEvents(accessToken, payload) {
 
   const numero = payload.numero || '';
   const cliente = payload.cliente || '';
+  const abogado = payload.abogado || '';
+  const pdfLine = payload.pdfName
+    ? ('\nPDF de cédula: ' + payload.pdfName + (payload.pdfBase64 ? ' (cargado en esta notificación)' : ' (sin archivo cargado)'))
+    : '\nPDF de cédula: no especificado';
+  const abogadoLine = abogado ? ('\nAbogado responsable: ' + abogado) : '';
   const footer = '\n\n— SCI Notificaciones · Expediente ' + numero;
 
   const evs = [];
@@ -1251,6 +1259,7 @@ async function createSciCalendarEvents(accessToken, payload) {
     if (!t.vencimiento) return;
     const desc =
       'Expediente: ' + numero + '\nCliente: ' + cliente +
+      abogadoLine + pdfLine +
       '\n\nPlazo: ' + t.dias + ' días hábiles\nAcción: ' + t.accion +
       '\n\nVencimiento: ' + formatDate(t.vencimiento) + footer;
     evs.push({
@@ -1267,6 +1276,7 @@ async function createSciCalendarEvents(accessToken, payload) {
   if (!evs.length && payload.nFecha) {
     const desc =
       'Expediente: ' + numero + '\nCliente: ' + cliente +
+      abogadoLine + pdfLine +
       (payload.actuacion ? '\n\nActuación: ' + payload.actuacion : '') +
       '\n\nFecha de notificación: ' + formatDate(payload.nFecha) + footer;
     evs.push({
@@ -1285,6 +1295,7 @@ async function createSciCalendarEvents(accessToken, payload) {
   if (!evs.length && fechaActuacion) {
     const desc =
       'Expediente: ' + numero + '\nCliente: ' + cliente +
+      abogadoLine + pdfLine +
       '\n\nActuación señalada: ' + (payload.actuacion || 'Sin detalle') +
       '\n\nFecha señalada: ' + formatDate(fechaActuacion) + (horaActuacion ? (' · Hora: ' + horaActuacion) : '') + footer;
     const ev = {
@@ -1308,6 +1319,7 @@ async function createSciCalendarEvents(accessToken, payload) {
   if (!evs.length && payload.cFecha) {
     const desc =
       'Expediente: ' + numero + '\nCliente: ' + cliente +
+      abogadoLine + pdfLine +
       (payload.actuacion ? '\n\nActuación: ' + payload.actuacion : '') +
       '\n\nNo se detectó fecha de término/notificación; se agenda recordatorio con la fecha de cédula: ' + formatDate(payload.cFecha) + footer;
     evs.push({
@@ -1349,6 +1361,24 @@ function openLastCreatedCalendarEvent() {
     return;
   }
   window.open(lastCreatedCalendarEventUrl, '_blank', 'noopener');
+}
+
+function setLocalPdfOpenButton() {
+  const btn = document.getElementById('btn-open-local-pdf');
+  if (!btn) return;
+  btn.style.display = pdfFile ? 'inline-flex' : 'none';
+}
+
+function openCurrentPdfFile() {
+  if (!pdfFile) {
+    alert('No hay PDF cargado en esta notificación.');
+    return;
+  }
+  const url = URL.createObjectURL(pdfFile);
+  window.open(url, '_blank', 'noopener');
+  setTimeout(function () {
+    try { URL.revokeObjectURL(url); } catch (e) {}
+  }, 60000);
 }
 
 // ── DESTINATARIOS ──────────────────────────────────────────────────────────────
@@ -1546,6 +1576,7 @@ function handleFile(file) {
     pdfBase64 = e.target.result.split(',')[1];
   };
   reader.readAsDataURL(file);
+  setLocalPdfOpenButton();
 }
 
 function removeFile() {
@@ -1554,6 +1585,7 @@ function removeFile() {
   document.getElementById('file-info').classList.remove('show');
   document.getElementById('analyze-btn').disabled = true;
   document.getElementById('ai-result').classList.remove('show');
+  setLocalPdfOpenButton();
 }
 
 // ── EXTRACCIÓN DE TEXTO (PDF.js + Tesseract en el navegador, sin servidor ni IA) ─
@@ -2354,8 +2386,12 @@ async function sendCalendarOnly() {
     if (btn) { btn.disabled = true; btn.textContent = 'Agendando…'; }
     const token = await ensureFreshGmailToken();
     const cr = await createSciCalendarEvents(token, payload);
+    const loginEmail = String(sessionStorage.getItem('sci_user_email') || '').trim().toLowerCase();
+    const invitees = uniqueEmailList(payload.toList);
+    const onlyOrganizerInvited = !!loginEmail && invitees.length === 1 && invitees[0] === loginEmail;
     setCalendarEventOpenButton(cr.firstUrl);
-    sentAlert.textContent = '✅ Calendar actualizado: ' + cr.created + ' evento(s) creados e invitaciones enviadas al equipo.';
+    sentAlert.textContent = '✅ Calendar actualizado: ' + cr.created + ' evento(s) creados e invitaciones enviadas al equipo.'
+      + (onlyOrganizerInvited ? ' Nota: Google no suele enviar correo de invitación al organizador cuando es el único invitado.' : '');
     sentAlert.className = 'alert success show';
     if (cr.firstUrl) {
       window.open(cr.firstUrl, '_blank', 'noopener');
@@ -2408,6 +2444,7 @@ function showAlert(el, msg, type) {
 renderInhabilesTable();
 recalcularTerminosPlazos();
 renderRecipients();
+setLocalPdfOpenButton();
 
 document.getElementById('cedula-fecha').addEventListener('change', recalcularTerminosPlazos);
 document.getElementById('notif-fecha').addEventListener('change', recalcularTerminosPlazos);
