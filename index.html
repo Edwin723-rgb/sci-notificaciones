@@ -665,7 +665,7 @@
       </button>
     </div>
     <p style="margin-top:10px;font-size:12px;color:var(--muted)">
-      Calendar usa la misma tabla de plazos y los mismos correos seleccionados en el paso 4 para enviar invitaciones. El botón de Gmail queda como opción secundaria.
+      Calendar usa la misma tabla de plazos y los correos del paso 4. El correo con el que iniciaste sesión no se duplica como invitado (eres el organizador). Los demás deberían recibir invitación; si alguien la filtra, suele ser su ajuste de Calendar «solo remitentes conocidos».
     </p>
     <div class="alert success" id="sent-alert" style="margin-top:16px">
       ✅ Correo enviado desde tu cuenta Gmail.
@@ -1111,6 +1111,17 @@ function uniqueEmailList(arr) {
   return Array.from(s);
 }
 
+/**
+ * Correos únicos para invitaciones en Calendar (no incluye al organizador).
+ * Incluir al mismo correo que el calendario primario suele confundir al flujo de invitaciones.
+ */
+function calendarInviteEmails(toList, organizerEmail) {
+  const org = String(organizerEmail || '').trim().toLowerCase();
+  return uniqueEmailList(toList).filter(function (em) {
+    return !org || em !== org;
+  });
+}
+
 function calendarDayPlusOne(isoYmd) {
   const d = new Date(isoYmd + 'T12:00:00');
   d.setDate(d.getDate() + 1);
@@ -1214,9 +1225,11 @@ function extractTimeHmFromSpanishText(text) {
   return '';
 }
 
-async function calendarApiCreateEvent(accessToken, eventBody) {
+async function calendarApiCreateEvent(accessToken, eventBody, sendUpdates) {
+  const su = sendUpdates === undefined || sendUpdates === null ? 'all' : String(sendUpdates);
+  const q = encodeURIComponent(su);
   const r = await fetch(
-    'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=' + q,
     {
       method: 'POST',
       headers: {
@@ -1235,10 +1248,37 @@ async function calendarApiCreateEvent(accessToken, eventBody) {
 }
 
 /**
+ * Reenvía notificaciones a invitados (algunos entornos no disparan el correo solo con insert).
+ * https://developers.google.com/workspace/calendar/api/v3/reference/events/patch
+ */
+async function calendarApiPatchEventSendUpdates(accessToken, eventId, patchBody) {
+  const id = encodeURIComponent(eventId);
+  const r = await fetch(
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events/' + id + '?sendUpdates=all',
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Bearer ' + accessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(patchBody)
+    }
+  );
+  const j = await r.json().catch(function () { return {}; });
+  if (!r.ok) {
+    const msg = j.error && j.error.message ? j.error.message : r.statusText;
+    throw new Error(msg || 'Calendar API patch');
+  }
+  return j;
+}
+
+/**
  * Crea eventos de día completo con invitaciones (sendUpdates=all).
  */
 async function createSciCalendarEvents(accessToken, payload) {
-  const attendeeObjs = uniqueEmailList(payload.toList).map(function (em) { return { email: em }; });
+  const organizerEmail = String(sessionStorage.getItem('sci_user_email') || '').trim().toLowerCase();
+  const inviteEmails = calendarInviteEmails(payload.toList, organizerEmail);
+  const attendeeObjs = inviteEmails.map(function (em) { return { email: em }; });
   if (!attendeeObjs.length) return { created: 0, note: 'sin destinatarios' };
 
   const numero = payload.numero || '';
@@ -1268,6 +1308,8 @@ async function createSciCalendarEvents(accessToken, payload) {
       start: { date: t.vencimiento },
       end: { date: calendarDayPlusOne(t.vencimiento) },
       attendees: attendeeObjs,
+      guestsCanSeeOtherGuests: true,
+      guestsCanModify: false,
       reminders: { useDefault: true },
       transparency: 'opaque'
     });
@@ -1285,6 +1327,8 @@ async function createSciCalendarEvents(accessToken, payload) {
       start: { date: payload.nFecha },
       end: { date: calendarDayPlusOne(payload.nFecha) },
       attendees: attendeeObjs,
+      guestsCanSeeOtherGuests: true,
+      guestsCanModify: false,
       reminders: { useDefault: true },
       transparency: 'opaque'
     });
@@ -1302,6 +1346,8 @@ async function createSciCalendarEvents(accessToken, payload) {
       summary: '[SCI] Actuación señalada · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
       description: desc,
       attendees: attendeeObjs,
+      guestsCanSeeOtherGuests: true,
+      guestsCanModify: false,
       reminders: { useDefault: true },
       transparency: 'opaque'
     };
@@ -1328,6 +1374,8 @@ async function createSciCalendarEvents(accessToken, payload) {
       start: { date: payload.cFecha },
       end: { date: calendarDayPlusOne(payload.cFecha) },
       attendees: attendeeObjs,
+      guestsCanSeeOtherGuests: true,
+      guestsCanModify: false,
       reminders: { useDefault: true },
       transparency: 'opaque'
     });
@@ -1335,13 +1383,37 @@ async function createSciCalendarEvents(accessToken, payload) {
 
   let created = 0;
   const links = [];
+  let inviteNotifyOk = true;
   for (let i = 0; i < evs.length; i++) {
-    const createdEvent = await calendarApiCreateEvent(accessToken, evs[i]);
+    const createdEvent = await calendarApiCreateEvent(accessToken, evs[i], 'none');
     if (createdEvent && createdEvent.htmlLink) links.push(createdEvent.htmlLink);
+    if (createdEvent && createdEvent.id && attendeeObjs.length) {
+      try {
+        await calendarApiPatchEventSendUpdates(accessToken, createdEvent.id, {
+          attendees: attendeeObjs,
+          guestsCanSeeOtherGuests: true,
+          guestsCanModify: false,
+          summary: evs[i].summary,
+          description: evs[i].description + '\n',
+          start: evs[i].start,
+          end: evs[i].end,
+          reminders: evs[i].reminders,
+          transparency: evs[i].transparency
+        });
+      } catch (patchErr) {
+        inviteNotifyOk = false;
+      }
+    }
     created++;
     if (i < evs.length - 1) await new Promise(function (res) { setTimeout(res, 120); });
   }
-  return { created: created, links: links, firstUrl: links[0] || '' };
+  return {
+    created: created,
+    links: links,
+    firstUrl: links[0] || '',
+    inviteeCount: inviteEmails.length,
+    inviteNotifyOk: inviteNotifyOk
+  };
 }
 
 function setCalendarEventOpenButton(url) {
@@ -2376,6 +2448,13 @@ async function sendCalendarOnly() {
     return;
   }
 
+  const loginEmailPre = String(sessionStorage.getItem('sci_user_email') || '').trim().toLowerCase();
+  const invitePreview = calendarInviteEmails(payload.toList, loginEmailPre);
+  if (!invitePreview.length) {
+    alert('No hay invitados distintos al correo con el que iniciaste sesión. En el paso 4 selecciona al menos a otra persona (o usa otra cuenta para organizar), porque Google no envía «invitación por correo» al organizador.');
+    return;
+  }
+
   const fechaActuacion = extractIsoDateFromSpanishTextWithFallback(payload.actuacion || '', guessYearFromPayload(payload));
   if (!terminos.length && !payload.nFecha && !fechaActuacion && !payload.cFecha) {
     alert('No hay plazos ni fechas detectables para crear eventos (notificación, actuación o cédula).');
@@ -2386,12 +2465,12 @@ async function sendCalendarOnly() {
     if (btn) { btn.disabled = true; btn.textContent = 'Agendando…'; }
     const token = await ensureFreshGmailToken();
     const cr = await createSciCalendarEvents(token, payload);
-    const loginEmail = String(sessionStorage.getItem('sci_user_email') || '').trim().toLowerCase();
-    const invitees = uniqueEmailList(payload.toList);
-    const onlyOrganizerInvited = !!loginEmail && invitees.length === 1 && invitees[0] === loginEmail;
     setCalendarEventOpenButton(cr.firstUrl);
-    sentAlert.textContent = '✅ Calendar actualizado: ' + cr.created + ' evento(s) creados e invitaciones enviadas al equipo.'
-      + (onlyOrganizerInvited ? ' Nota: Google no suele enviar correo de invitación al organizador cuando es el único invitado.' : '');
+    let msg = '✅ Calendar: ' + cr.created + ' evento(s). Invitaciones dirigidas a ' + (cr.inviteeCount || 0) + ' correo(s).';
+    if (cr.inviteNotifyOk === false) {
+      msg += ' Revisa en Google Calendar el evento y, si hace falta, usa «Enviar actualización a los invitados».';
+    }
+    sentAlert.textContent = msg;
     sentAlert.className = 'alert success show';
     if (cr.firstUrl) {
       window.open(cr.firstUrl, '_blank', 'noopener');
