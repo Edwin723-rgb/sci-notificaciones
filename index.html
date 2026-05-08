@@ -393,7 +393,7 @@
     <p class="login-hint">
       <strong>Paso 1:</strong> en <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a> crea un ID de cliente OAuth tipo &quot;Aplicación web&quot;, activa en el mismo proyecto <strong>Gmail API</strong> y <strong>Google Calendar API</strong>, y en &quot;Orígenes JavaScript autorizados&quot; agrega tu URL de Vercel y <code>http://localhost</code>. Copia el Client ID y pégalo arriba → Guardar.<br>
       Tras actualizar permisos (Calendar), usa <strong>Cerrar sesión</strong> y vuelve a entrar una vez para autorizar todo.<br>
-      <strong>Paso 2:</strong> si la app está en modo prueba, añade tu correo como usuario de prueba en la pantalla de consentimiento OAuth.<br>
+      <strong>Paso 2:</strong> si la app está en modo prueba, añade como <strong>usuarios de prueba</strong> en la pantalla de consentimiento OAuth todos los correos con los que iniciarán sesión (incluye cuentas corporativas <em>y</em> personales como Hotmail si las usan Alejandra e Ingrid).<br>
       Opcional: también puedes pegar el ID en el código (<code>window.__SCI_GOOGLE_CLIENT_ID__</code>) o abrir la página con <code>?client_id=TU_ID</code>.
     </p>
   </div>
@@ -419,7 +419,7 @@
       <span class="step-num">1</span>Cédula PDF
     </div>
     <div class="step" id="step2-tab" onclick="goToStep(2)">
-      <span class="step-num">2</span>Datos del Expediente
+      <span class="step-num">2</span>Datos del asunto
     </div>
     <div class="step" id="step3-tab" onclick="goToStep(3)">
       <span class="step-num">3</span>Términos
@@ -481,14 +481,23 @@
     <div class="card">
       <div class="card-title">
         <div class="icon">⚖️</div>
-        Datos del Expediente
+        Datos del asunto
       </div>
       <div class="alert info show" id="info-manual">
-        💡 Puedes llenar estos datos manualmente o aplicar los extraídos en el paso anterior.
+        💡 Puedes llenar estos datos manualmente o aplicar los extraídos en el paso anterior. Elige primero el <strong>tipo de asunto</strong> si no es expediente civil (ej. causa penal o carpeta de investigación).
       </div>
       <div class="form-grid">
         <div class="field">
-          <label>No. Expediente <span class="req">*</span></label>
+          <label for="exp-tipo-asunto">Tipo de asunto <span class="req">*</span></label>
+          <select id="exp-tipo-asunto">
+            <option value="expediente">Expediente (civil, mercantil, laboral, familiar…)</option>
+            <option value="causa_penal">Causa penal / toca</option>
+            <option value="carpeta">Carpeta de investigación</option>
+            <option value="otro">Otro identificador</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="exp-numero"><span id="exp-numero-label-text">No. expediente</span> <span class="req">*</span></label>
           <input type="text" id="exp-numero" placeholder="Ej. 251/2025-S-4">
         </div>
         <div class="field">
@@ -694,7 +703,9 @@ window.__SCI_GOOGLE_CLIENT_ID__ = window.__SCI_GOOGLE_CLIENT_ID__ || ''; /* Pega
 const ALLOWED_LOGIN_EMAILS = new Set([
   'edwinmmoralesg@gmail.com',
   'alejandra@solucionescorporativas.mx',
-  'ingrid@solucionescorporativas.mx'
+  'alejandra_herrera99@hotmail.com',
+  'ingrid@solucionescorporativas.mx',
+  'janice_correa18@hotmail.com'
 ]);
 
 // ── ESTADO GLOBAL ──────────────────────────────────────────────────────────────
@@ -768,6 +779,55 @@ function formatDate(str) {
   const months = ['','enero','febrero','marzo','abril','mayo','junio',
                   'julio','agosto','septiembre','octubre','noviembre','diciembre'];
   return `${parseInt(d)} de ${months[parseInt(m)]} de ${y}`;
+}
+
+/** Metadatos según tipo de asunto (expediente, penal, carpeta, etc.). */
+function getTipoAsuntoMeta() {
+  const el = document.getElementById('exp-tipo-asunto');
+  const v = el && el.value ? el.value : 'expediente';
+  const M = {
+    expediente: {
+      value: 'expediente',
+      bodyFieldLabel: 'Expediente',
+      subjectTag: 'Exp.',
+      calendarSummaryTag: 'Exp.',
+      numLabelShort: 'Número de expediente',
+      numPlaceholder: 'Ej. 251/2025-S-4 · 84/2025'
+    },
+    causa_penal: {
+      value: 'causa_penal',
+      bodyFieldLabel: 'Causa penal',
+      subjectTag: 'Causa penal',
+      calendarSummaryTag: 'Causa penal',
+      numLabelShort: 'No. de causa / toca',
+      numPlaceholder: 'Ej. 123/2025 · toca 45/2026'
+    },
+    carpeta: {
+      value: 'carpeta',
+      bodyFieldLabel: 'Carpeta de investigación',
+      subjectTag: 'Carpeta',
+      calendarSummaryTag: 'Carpeta',
+      numLabelShort: 'Carpeta / NUC / referencia',
+      numPlaceholder: 'Ej. CI-FEDE/DGSI-001/2026 · NUC'
+    },
+    otro: {
+      value: 'otro',
+      bodyFieldLabel: 'Identificador',
+      subjectTag: 'Ref.',
+      calendarSummaryTag: 'Ref.',
+      numLabelShort: 'Identificador del asunto',
+      numPlaceholder: 'Referencia del órgano o interna'
+    }
+  };
+  return M[v] || M.expediente;
+}
+
+function syncTipoAsuntoUI() {
+  const meta = getTipoAsuntoMeta();
+  const labelSpan = document.getElementById('exp-numero-label-text');
+  const inp = document.getElementById('exp-numero');
+  if (labelSpan) labelSpan.textContent = meta.numLabelShort;
+  if (inp) inp.placeholder = meta.numPlaceholder;
 }
 
 function diasRestantes(vencimientoStr) {
@@ -1288,7 +1348,10 @@ async function createSciCalendarEvents(accessToken, payload) {
     ? ('\nPDF de cédula: ' + payload.pdfName + (payload.pdfBase64 ? ' (cargado en esta notificación)' : ' (sin archivo cargado)'))
     : '\nPDF de cédula: no especificado';
   const abogadoLine = abogado ? ('\nAbogado responsable: ' + abogado) : '';
-  const footer = '\n\n— SCI Notificaciones · Expediente ' + numero;
+  const tipoLabel = payload.tipoBodyFieldLabel || 'Expediente';
+  const tipoCal = payload.tipoCalendarSummaryTag || 'Exp.';
+  const idLine = tipoLabel + ': ' + numero + '\nCliente: ';
+  const footer = '\n\n— SCI Notificaciones · ' + tipoLabel + ' ' + numero;
 
   const evs = [];
   const sorted = [...terminos].sort(function (a, b) {
@@ -1298,12 +1361,12 @@ async function createSciCalendarEvents(accessToken, payload) {
   sorted.forEach(function (t) {
     if (!t.vencimiento) return;
     const desc =
-      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      idLine + cliente +
       abogadoLine + pdfLine +
       '\n\nPlazo: ' + t.dias + ' días hábiles\nAcción: ' + t.accion +
       '\n\nVencimiento: ' + formatDate(t.vencimiento) + footer;
     evs.push({
-      summary: '[SCI] Vence plazo · Exp. ' + numero + ' · ' + truncateEs(t.accion, 52),
+      summary: '[SCI] Vence plazo · ' + tipoCal + ' ' + numero + ' · ' + truncateEs(t.accion, 52),
       description: desc,
       start: { date: t.vencimiento },
       end: { date: calendarDayPlusOne(t.vencimiento) },
@@ -1317,12 +1380,12 @@ async function createSciCalendarEvents(accessToken, payload) {
 
   if (!evs.length && payload.nFecha) {
     const desc =
-      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      idLine + cliente +
       abogadoLine + pdfLine +
       (payload.actuacion ? '\n\nActuación: ' + payload.actuacion : '') +
       '\n\nFecha de notificación: ' + formatDate(payload.nFecha) + footer;
     evs.push({
-      summary: '[SCI] Notificación · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
+      summary: '[SCI] Notificación · ' + tipoCal + ' ' + numero + ' · ' + truncateEs(cliente, 36),
       description: desc,
       start: { date: payload.nFecha },
       end: { date: calendarDayPlusOne(payload.nFecha) },
@@ -1338,12 +1401,12 @@ async function createSciCalendarEvents(accessToken, payload) {
   const horaActuacion = extractTimeHmFromSpanishText(payload.actuacion || '');
   if (!evs.length && fechaActuacion) {
     const desc =
-      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      idLine + cliente +
       abogadoLine + pdfLine +
       '\n\nActuación señalada: ' + (payload.actuacion || 'Sin detalle') +
       '\n\nFecha señalada: ' + formatDate(fechaActuacion) + (horaActuacion ? (' · Hora: ' + horaActuacion) : '') + footer;
     const ev = {
-      summary: '[SCI] Actuación señalada · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
+      summary: '[SCI] Actuación señalada · ' + tipoCal + ' ' + numero + ' · ' + truncateEs(cliente, 36),
       description: desc,
       attendees: attendeeObjs,
       guestsCanSeeOtherGuests: true,
@@ -1364,12 +1427,12 @@ async function createSciCalendarEvents(accessToken, payload) {
 
   if (!evs.length && payload.cFecha) {
     const desc =
-      'Expediente: ' + numero + '\nCliente: ' + cliente +
+      idLine + cliente +
       abogadoLine + pdfLine +
       (payload.actuacion ? '\n\nActuación: ' + payload.actuacion : '') +
       '\n\nNo se detectó fecha de término/notificación; se agenda recordatorio con la fecha de cédula: ' + formatDate(payload.cFecha) + footer;
     evs.push({
-      summary: '[SCI] Recordatorio de actuación · Exp. ' + numero + ' · ' + truncateEs(cliente, 36),
+      summary: '[SCI] Recordatorio · ' + tipoCal + ' ' + numero + ' · ' + truncateEs(cliente, 36),
       description: desc,
       start: { date: payload.cFecha },
       end: { date: calendarDayPlusOne(payload.cFecha) },
@@ -2172,6 +2235,10 @@ function applyExtractedFields(data, opts) {
       const opt = sel.options[o];
       if (opt.text === data.materia) { sel.value = opt.value; break; }
     }
+    if (data.materia === 'Penal') {
+      const tipoEl = document.getElementById('exp-tipo-asunto');
+      if (tipoEl && tipoEl.value === 'expediente') tipoEl.value = 'causa_penal';
+    }
   }
 
   terminosPlantilla = [];
@@ -2183,6 +2250,7 @@ function applyExtractedFields(data, opts) {
     });
   }
   recalcularTerminosPlazos();
+  syncTipoAsuntoUI();
 
   if (opts.goToStep2) goToStep(2);
 }
@@ -2194,12 +2262,13 @@ function applyAIData() {
 
 // ── PREVIEW ────────────────────────────────────────────────────────────────────
 function buildPreviewAndGo() {
+  const meta = getTipoAsuntoMeta();
   const numero = document.getElementById('exp-numero').value.trim();
   const cliente = document.getElementById('exp-cliente').value.trim();
   const abogado = document.getElementById('exp-abogado').value;
 
   if (!numero || !cliente || !abogado) {
-    alert('Por favor completa al menos: Número de expediente, Cliente y Abogado responsable.');
+    alert('Por favor completa al menos: ' + meta.numLabelShort + ', Cliente y Abogado responsable.');
     return;
   }
 
@@ -2208,6 +2277,7 @@ function buildPreviewAndGo() {
 }
 
 function buildPreview() {
+  const metaTipo  = getTipoAsuntoMeta();
   const numero    = document.getElementById('exp-numero').value.trim();
   const juzgado   = document.getElementById('exp-juzgado').value.trim();
   const cliente   = document.getElementById('exp-cliente').value.trim();
@@ -2226,7 +2296,7 @@ function buildPreview() {
   });
   document.getElementById('prev-to').textContent = toList.join(', ');
 
-  const asunto = `[SCI] Notificación · Exp. ${numero} · ${cliente}`;
+  const asunto = `[SCI] Notificación · ${metaTipo.subjectTag} ${numero} · ${cliente}`;
   document.getElementById('prev-subject').textContent = asunto;
 
   const fromAddr = sessionStorage.getItem('sci_user_email') || '';
@@ -2268,7 +2338,8 @@ function buildPreview() {
     <p style="font-size:13px;color:#6b7280;margin-bottom:20px">SCI Despacho Jurídico · Villahermosa, Tabasco</p>
     
     <table style="width:100%;border-collapse:collapse;margin-bottom:4px">
-      ${row('No. Expediente', numero)}
+      ${row('Tipo de asunto', metaTipo.bodyFieldLabel)}
+      ${row(metaTipo.numLabelShort, numero)}
       ${row('Juzgado / Tribunal', juzgado || '—')}
       ${row('Cliente', cliente)}
       ${posicion ? row('Posición procesal', posicion) : ''}
@@ -2304,6 +2375,7 @@ function row(label, val) {
 
 // ── SEND EMAIL ─────────────────────────────────────────────────────────────────
 function collectEmailPayload() {
+  const tipoMeta = getTipoAsuntoMeta();
   const numero    = document.getElementById('exp-numero').value.trim();
   const cliente   = document.getElementById('exp-cliente').value.trim();
   const juzgado   = document.getElementById('exp-juzgado').value.trim();
@@ -2320,11 +2392,11 @@ function collectEmailPayload() {
     ABOGADOS[i].emails.forEach(e => toList.push(e));
   });
 
-  const subjectPlain = `[SCI] Notificación · Exp. ${numero} · ${cliente}`;
+  const subjectPlain = `[SCI] Notificación · ${tipoMeta.subjectTag} ${numero} · ${cliente}`;
 
   let body = `NOTIFICACIÓN JUDICIAL — SCI DESPACHO JURÍDICO\n`;
   body += `${'═'.repeat(50)}\n\n`;
-  body += `Expediente:          ${numero}\n`;
+  body += tipoMeta.bodyFieldLabel + ':          ' + numero + '\n';
   if (juzgado)   body += `Juzgado/Tribunal:    ${juzgado}\n`;
   body += `Cliente:             ${cliente}\n`;
   if (posicion)  body += `Posición procesal:   ${posicion}\n`;
@@ -2362,6 +2434,9 @@ function collectEmailPayload() {
     pdfName: pdfFile ? pdfFile.name : 'cedula.pdf',
     pdfBase64: pdfBase64,
     numero: numero,
+    tipoAsunto: tipoMeta.value,
+    tipoBodyFieldLabel: tipoMeta.bodyFieldLabel,
+    tipoCalendarSummaryTag: tipoMeta.calendarSummaryTag,
     cliente: cliente,
     juzgado: juzgado,
     nFecha: nFecha,
@@ -2524,6 +2599,12 @@ renderInhabilesTable();
 recalcularTerminosPlazos();
 renderRecipients();
 setLocalPdfOpenButton();
+
+(function setupTipoAsuntoHandlers() {
+  const sel = document.getElementById('exp-tipo-asunto');
+  if (sel) sel.addEventListener('change', syncTipoAsuntoUI);
+  syncTipoAsuntoUI();
+})();
 
 document.getElementById('cedula-fecha').addEventListener('change', recalcularTerminosPlazos);
 document.getElementById('notif-fecha').addEventListener('change', recalcularTerminosPlazos);
