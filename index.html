@@ -651,22 +651,22 @@
           <div id="prev-body-html"></div>
         </div>
       </div>
-      <div style="margin-top:18px;padding:14px 16px;background:var(--cream2);border-radius:10px;border:1px solid var(--border);max-width:720px">
-        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:13px;color:var(--navy);line-height:1.45">
-          <input type="checkbox" id="opt-calendar-events" checked style="margin-top:4px;flex-shrink:0">
-          <span><strong>Google Calendar:</strong> después del correo, crear en tu calendario un evento por cada <strong>vencimiento de plazo</strong> (día completo) e invitar por correo a <strong>todas las personas seleccionadas</strong> en el paso 4 (Google envía la invitación). Si no hay plazos calculados pero sí fecha de notificación, se crea un recordatorio ese día.</span>
-        </label>
-      </div>
     </div>
     <div class="nav-btns" style="flex-wrap:wrap">
       <button class="ai-btn secondary" onclick="goToStep(4)">← Editar</button>
-      <button class="ai-btn gold" onclick="sendEmail()" id="btn-send-gmail" style="font-size:15px">
-        📤 Enviar con Gmail
+      <button class="ai-btn gold" onclick="sendCalendarOnly()" id="btn-send-calendar" style="font-size:15px" title="Crea eventos e invita por correo al equipo desde Google Calendar">
+        📅 Agendar en Calendar
+      </button>
+      <button class="ai-btn secondary" onclick="sendEmail()" id="btn-send-gmail" style="font-size:14px" title="Opcional: envío de correo tradicional por Gmail">
+        📤 Enviar solo Gmail
       </button>
       <button type="button" class="ai-btn secondary" onclick="sendEmailMailtoFallback()" style="font-size:13px" title="Si Gmail API no está configurado o falla">
         Abrir en cliente de correo…
       </button>
     </div>
+    <p style="margin-top:10px;font-size:12px;color:var(--muted)">
+      Calendar usa la misma tabla de plazos y los mismos correos seleccionados en el paso 4 para enviar invitaciones. El botón de Gmail queda como opción secundaria.
+    </p>
     <div class="alert success" id="sent-alert" style="margin-top:16px">
       ✅ Correo enviado desde tu cuenta Gmail.
     </div>
@@ -2149,23 +2149,7 @@ async function sendEmail() {
     const raw = mimeToBase64Url(mime);
     await gmailApiSend(token, raw);
 
-    let extraCal = '';
-    const optCal = document.getElementById('opt-calendar-events');
-    if (optCal && optCal.checked) {
-      try {
-        const cr = await createSciCalendarEvents(token, payload);
-        if (cr.created > 0) {
-          extraCal = ' · ' + cr.created + ' evento(s) en Google Calendar (invitaciones al equipo).';
-        } else if (!terminos.length && !payload.nFecha) {
-          extraCal = ' · Calendar: no hay plazos ni fecha de notificación para crear eventos.';
-        }
-      } catch (calErr) {
-        const cm = calErr && calErr.message ? calErr.message : String(calErr);
-        alert('El correo sí se envió, pero Google Calendar falló:\n\n' + formatCalendarApiError(cm));
-      }
-    }
-
-    sentAlert.textContent = '✅ Correo enviado desde tu cuenta Gmail.' + extraCal;
+    sentAlert.textContent = '✅ Correo enviado desde tu cuenta Gmail.';
     sentAlert.className = 'alert success show';
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
@@ -2176,7 +2160,45 @@ async function sendEmail() {
       gmailAccessToken = null;
     }
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '📤 Enviar con Gmail'; }
+    if (btn) { btn.disabled = false; btn.textContent = '📤 Enviar solo Gmail'; }
+  }
+}
+
+async function sendCalendarOnly() {
+  const sentAlert = document.getElementById('sent-alert');
+  const sentMailto = document.getElementById('sent-alert-mailto');
+  sentAlert.classList.remove('show');
+  sentMailto.classList.remove('show');
+
+  const cid = getGoogleClientId();
+  if (!cid) {
+    alert('Configura el Client ID: pégalo en la pantalla de acceso y pulsa Guardar, o añádelo en el código (window.__SCI_GOOGLE_CLIENT_ID__).');
+    return;
+  }
+
+  const btn = document.getElementById('btn-send-calendar');
+  const payload = collectEmailPayload();
+  if (!payload.toList.length) {
+    alert('Selecciona al menos un destinatario en el paso 4.');
+    return;
+  }
+
+  if (!terminos.length && !payload.nFecha) {
+    alert('No hay plazos ni fecha de notificación para crear eventos.');
+    return;
+  }
+
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Agendando…'; }
+    const token = await ensureFreshGmailToken();
+    const cr = await createSciCalendarEvents(token, payload);
+    sentAlert.textContent = '✅ Calendar actualizado: ' + cr.created + ' evento(s) creados e invitaciones enviadas al equipo.';
+    sentAlert.className = 'alert success show';
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    alert('No se pudo agendar en Google Calendar:\n\n' + formatCalendarApiError(msg));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📅 Agendar en Calendar'; }
   }
 }
 
