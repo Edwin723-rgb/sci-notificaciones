@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>SCI — Registro de Notificaciones</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
@@ -362,6 +363,12 @@
   .login-card p { font-size: 13px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
   .login-error { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 1.2em; }
   .login-hint { font-size: 11px; color: var(--muted); margin-top: 16px; line-height: 1.45; }
+  .oauth-env-box { font-size: 12px; line-height: 1.45; margin-bottom: 14px; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--cream2); }
+  .oauth-env-box.ok { border-color: #a8d5c4; background: #e8f5ee; color: var(--navy); }
+  .oauth-env-box.err { border-color: #e8b4b0; background: #fdecea; color: #7a1f18; }
+  .oauth-env-box code { font-size: 11px; word-break: break-all; }
+  .oauth-origin-row { margin-top: 8px; }
+  .oauth-origin-row button { font-size: 11px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
   .login-client-row { margin-bottom: 16px; text-align: left; }
   .login-client-row label { display: block; font-size: 12px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
   .login-client-row input {
@@ -398,13 +405,13 @@
         <button type="button" id="btn-clear-client-id">Quitar guardado</button>
       </div>
     </div>
+    <div id="oauth-env-status" class="oauth-env-box" role="status"></div>
     <button type="button" class="ai-btn" id="btn-google-login" style="width:100%">Iniciar sesión con Google</button>
     <p id="login-error" class="login-error"></p>
     <p class="login-hint">
-      <strong>Paso 1:</strong> en <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a> crea un ID de cliente OAuth tipo &quot;Aplicación web&quot;, activa en el mismo proyecto <strong>Gmail API</strong>, <strong>Google Calendar API</strong> y <strong>Google Drive API</strong>, y en &quot;Orígenes JavaScript autorizados&quot; agrega tu URL de Vercel y <code>http://localhost</code>. Copia el Client ID y pégalo arriba → Guardar.<br>
-      Tras actualizar permisos (Calendar), usa <strong>Cerrar sesión</strong> y vuelve a entrar una vez para autorizar todo.<br>
-      <strong>Paso 2:</strong> si la app está en modo prueba, añade como <strong>usuarios de prueba</strong> en la pantalla de consentimiento OAuth todos los correos con los que iniciarán sesión (incluye cuentas corporativas <em>y</em> personales como Hotmail si las usan Alejandra e Ingrid).<br>
-      Opcional: también puedes pegar el ID en el código (<code>window.__SCI_GOOGLE_CLIENT_ID__</code>) o abrir la página con <code>?client_id=TU_ID</code>.
+      <strong>Importante:</strong> usa <strong>https://</strong> (Vercel). «No es seguro» = <code>http://</code>, IP o archivo local — Google no inicia sesión.<br><br>
+      <strong>Paso 1:</strong> <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Credenciales → OAuth web</a> → <strong>Orígenes JavaScript autorizados</strong>: el origen de arriba (sin /). <code>http://localhost</code> para local. APIs: Gmail, Calendar, Drive.<br>
+      <strong>Paso 2:</strong> modo prueba → usuarios de prueba. Tras cambios: Cerrar sesión y reentrar. Cookies para <code>accounts.google.com</code> si falla.
     </p>
   </div>
 </div>
@@ -896,6 +903,45 @@ function urgenciaLabel(dias) {
 }
 
 // ── GOOGLE LOGIN + Gmail API ─────────────────────────────────────────────────
+
+function getOAuthPageOrigin() { try { return window.location.origin || ''; } catch (e) { return ''; } }
+function isLocalhostOrigin(o) { return /^https?:\/\/localhost(:\d+)?$/i.test(o||'') || /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(o||''); }
+function isOAuthSecureEnough() {
+  if (typeof window.isSecureContext === 'boolean') return window.isSecureContext;
+  const o = getOAuthPageOrigin();
+  return o.indexOf('https://') === 0 || isLocalhostOrigin(o);
+}
+function formatGoogleOAuthError(err) {
+  const raw = String(err || '').trim();
+  const low = raw.toLowerCase();
+  if (!raw) return 'No se pudo iniciar sesión con Google.';
+  if (low.indexOf('origin_mismatch') >= 0 || low.indexOf('idpiframe') >= 0 || low.indexOf('not allowed') >= 0)
+    return 'Origen no autorizado. En Google Cloud agrega: ' + (getOAuthPageOrigin() || '?') + ' (sin / al final).';
+  if (low === 'popup_closed_by_user') return 'Cerraste la ventana de Google.';
+  if (low === 'access_denied') return 'Acceso denegado. ¿Estás en usuarios de prueba?';
+  return raw;
+}
+function renderOAuthEnvironmentStatus() {
+  const box = document.getElementById('oauth-env-status');
+  const btn = document.getElementById('btn-google-login');
+  if (!box) return;
+  const origin = getOAuthPageOrigin();
+  if (!isOAuthSecureEnough()) {
+    box.className = 'oauth-env-box err';
+    box.innerHTML = '<strong>Sitio no seguro para Google</strong><br>Abre la URL <code>https://</code> de Vercel o <code>http://localhost</code>.';
+    if (btn) btn.disabled = true;
+    return;
+  }
+  box.className = 'oauth-env-box ok';
+  box.innerHTML = '<strong>Origen (copiar a Google Cloud):</strong><br><code id="oauth-origin-text">' + origin + '</code><div class="oauth-origin-row"><button type="button" id="btn-copy-oauth-origin">Copiar</button></div>';
+  if (btn) btn.disabled = false;
+  const c = document.getElementById('btn-copy-oauth-origin');
+  if (c) c.onclick = function () {
+    const v = origin;
+    (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).catch(function () { prompt('Copia:', v); });
+  };
+}
+
 const GOOGLE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -1009,7 +1055,11 @@ function initGoogleTokenClient() {
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: cid,
     scope: GOOGLE_OAUTH_SCOPES,
-    callback: function () {}
+    callback: function () {},
+    error_callback: function (err) {
+      const el = document.getElementById('login-error');
+      if (el) el.textContent = formatGoogleOAuthError(err && err.type ? err.type : err);
+    }
   });
 }
 
@@ -1035,6 +1085,8 @@ function tryRestoreSession() {
 function startGoogleLogin() {
   const errEl = document.getElementById('login-error');
   errEl.textContent = '';
+  renderOAuthEnvironmentStatus();
+  if (!isOAuthSecureEnough()) { errEl.textContent = 'Usa https en Vercel o localhost.'; return; }
   const cid = getGoogleClientId();
   if (!cid) {
     errEl.textContent = 'Pega tu Client ID arriba (termina en .apps.googleusercontent.com) y pulsa «Guardar en este navegador».';
@@ -1047,7 +1099,7 @@ function startGoogleLogin() {
   }
   tokenClient.callback = async function (resp) {
     if (resp.error) {
-      errEl.textContent = resp.error || 'No se pudo iniciar sesión.';
+      errEl.textContent = formatGoogleOAuthError(resp.error);
       return;
     }
     const accessToken = resp.access_token;
@@ -1089,6 +1141,9 @@ function whenGsiReady(cb, n) {
     cb();
   } else if (n < 200) {
     setTimeout(function () { whenGsiReady(cb, n + 1); }, 50);
+  } else {
+    const el = document.getElementById('login-error');
+    if (el && !el.textContent) el.textContent = 'No se cargó Google Sign-In (bloqueador o red).';
   }
 }
 
@@ -2869,6 +2924,7 @@ try {
   }
 } catch (ignore) {}
 prefillOAuthClientIdInput();
+renderOAuthEnvironmentStatus();
 whenGsiReady(function () {
   initGoogleTokenClient();
   if (!tryRestoreSession()) showLoginGate();
