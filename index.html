@@ -761,18 +761,50 @@ function isInhabil(date) {
   return INHABILES_SET.has(key);
 }
 
-function addBusinessDays(startDateStr, days) {
-  let d = new Date(startDateStr + 'T12:00:00');
-  // move to next business day to start count
-  d.setDate(d.getDate() + 1);
-  let counted = 0;
-  while (counted < days) {
-    if (!isInhabil(d)) counted++;
-    if (counted < days) d.setDate(d.getDate() + 1);
+function siguienteDiaHabil(dateStr) {
+  let d = new Date(dateStr + 'T12:00:00');
+  do { d.setDate(d.getDate() + 1); } while (isInhabil(d));
+  return d.toISOString().slice(0, 10);
+}
+
+function detectarTipoComputoDesdeTexto(texto) {
+  const t = String(texto || '').toLowerCase().replace(/\s+/g, ' ');
+  if (/contad[oa]s?\s+a\s+partir\s+del\s+d[ií]a\s+siguiente\s+en\s+que\s+surta\s+efectos|d[ií]a\s+siguiente\s+en\s+que\s+surta\s+efectos\s+la\s+notificaci[oó]n/.test(t)) {
+    return 'dia_siguiente_tras_surte';
   }
-  // if landing date is inhábil, move forward
+  return 'desde_surte';
+}
+
+function obtenerTextoReferenciaComputo() {
+  const act = document.getElementById('exp-actuacion');
+  const a = act ? act.value.trim() : '';
+  return (a + ' ' + (lastCedulaRawText || '')).trim();
+}
+
+function resolverEtapasComputo(fechaNotificacionOCedula, tipoComputo) {
+  const notificacion = fechaNotificacionOCedula;
+  const surteEfectos = siguienteDiaHabil(notificacion);
+  let inicioComputo = surteEfectos;
+  if (tipoComputo === 'dia_siguiente_tras_surte') {
+    inicioComputo = siguienteDiaHabil(surteEfectos);
+  }
+  return { notificacion: notificacion, surteEfectos: surteEfectos, inicioComputo: inicioComputo };
+}
+
+function vencimientoTrasDiasHabiles(inicioComputoStr, dias) {
+  let d = new Date(inicioComputoStr + 'T12:00:00');
+  let counted = 0;
+  while (counted < dias) {
+    if (!isInhabil(d)) counted++;
+    if (counted < dias) d.setDate(d.getDate() + 1);
+  }
   while (isInhabil(d)) d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0,10);
+  return d.toISOString().slice(0, 10);
+}
+
+function addBusinessDays(startDateStr, days) {
+  const etapas = resolverEtapasComputo(startDateStr, detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo()));
+  return vencimientoTrasDiasHabiles(etapas.inicioComputo, days);
 }
 
 function formatDate(str) {
@@ -1586,21 +1618,32 @@ function actualizarHintComputoTerminos() {
   if (pref === 'cedula') {
     extra = ' Cuando tengas la fecha en que se notificó personalmente, colócala en el paso 2 para recalcular desde esa fecha.';
   }
-  el.innerHTML = `Vencimientos con <strong>días hábiles</strong> desde la <strong>${etiqueta}</strong> (${formatDate(inicio)}).` + extra;
+  const tipo = detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo());
+  const etapas = resolverEtapasComputo(inicio, tipo);
+  const notaCorre = etapas.inicioComputo === etapas.surteEfectos
+    ? 'mismo día en que surte efectos'
+    : 'día hábil siguiente a que surte efectos';
+  el.innerHTML = 'Cómputo: <strong>notifica</strong> (' + formatDate(etapas.notificacion) + ') → <strong>surte efectos</strong> (' + formatDate(etapas.surteEfectos) + ') → <strong>corre el plazo</strong> desde el ' + formatDate(etapas.inicioComputo) + ' (' + notaCorre + ').' + extra;
 }
 
 /** Reconstruye <code>terminos</code> a partir de la plantilla extraída y las fechas del formulario. */
 function recalcularTerminosPlazos() {
   const { inicio, pref } = resolverInicioComputo();
+  const tipoDefault = detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo());
   terminos = [];
   if (inicio && terminosPlantilla.length) {
     terminosPlantilla.forEach(function (t) {
       if (!t || !t.dias || !t.accion) return;
+      const tipo = t.tipoComputo || tipoDefault;
+      const etapas = resolverEtapasComputo(inicio, tipo);
       terminos.push({
         accion: t.accion,
         dias: t.dias,
-        inicio: inicio,
-        vencimiento: addBusinessDays(inicio, t.dias),
+        fechaNotificacion: etapas.notificacion,
+        surteEfectos: etapas.surteEfectos,
+        inicio: etapas.inicioComputo,
+        vencimiento: vencimientoTrasDiasHabiles(etapas.inicioComputo, t.dias),
+        tipoComputo: tipo,
         computoDesde: pref
       });
     });
@@ -1630,7 +1673,9 @@ function renderTerminos() {
       </div>
       <div class="termino-dates">
         <span><strong>${t.dias} días hábiles</strong></span>
-        <span>Inicia cómputo: <strong>${formatDate(t.inicio)}</strong></span>
+        <span>Notificación: <strong>${formatDate(t.fechaNotificacion || t.inicio)}</strong></span>
+        <span>Surte efectos: <strong>${formatDate(t.surteEfectos || t.inicio)}</strong></span>
+        <span>Corre el plazo (inicia): <strong>${formatDate(t.inicio)}</strong></span>
         <span>Vence: <strong>${formatDate(t.vencimiento)}</strong></span>
       </div>
     </div>`;
@@ -2113,8 +2158,9 @@ function sincronizarTerminosPlantillaDesdeFormulario() {
   }
   const merged = combinarTerminosDetectados(fuentes);
   if (merged.length) {
+    const tipo = detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo());
     terminosPlantilla = merged.map(function (t) {
-      return { accion: t.accion, dias: t.dias };
+      return { accion: t.accion, dias: t.dias, tipoComputo: tipo };
     });
   }
 }
@@ -2343,7 +2389,7 @@ function applyExtractedFields(data, opts) {
   if (!terminosPlantilla.length && data.terminos && data.terminos.length) {
     data.terminos.forEach(function (t) {
       if (t && t.dias && t.accion) {
-        terminosPlantilla.push({ accion: t.accion, dias: t.dias });
+        terminosPlantilla.push({ accion: t.accion, dias: t.dias, tipoComputo: detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo()) });
       }
     });
   }
