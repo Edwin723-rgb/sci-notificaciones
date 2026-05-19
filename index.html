@@ -584,7 +584,7 @@
         Términos y Plazos
       </div>
       <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
-        Los plazos se obtienen del texto de la cédula (paso 1) y los <strong>vencimientos se calculan solos</strong> con <strong>días hábiles</strong> (calendario SCJN 2026), usando la <strong>fecha de notificación</strong> del paso 2; si no está, la <strong>fecha de la cédula</strong>.
+        Los plazos se obtienen del campo <strong>Actuación / Acuerdo notificado</strong> (paso 2) y del texto de la cédula (paso 1); los <strong>vencimientos se calculan solos</strong> con <strong>días hábiles</strong> (calendario SCJN 2026), usando la <strong>fecha de notificación</strong> del paso 2; si no está, la <strong>fecha de la cédula</strong>.
       </p>
       <p id="terminos-computo-hint" style="font-size:12px;color:var(--navy);margin-bottom:14px;padding:10px 12px;background:var(--cream2);border-radius:8px;border-left:3px solid var(--gold);"></p>
       <div id="terminos-list"></div>
@@ -717,6 +717,7 @@ let aiData = null;
 let terminos = [];
 /** Plazos detectados en el texto ({ días, acción }); el vencimiento se deriva de las fechas del paso 2. */
 let terminosPlantilla = [];
+let lastCedulaRawText = '';
 let lastCreatedCalendarEventUrl = '';
 
 // ── DÍAS INHÁBILES SCJN 2026 ───────────────────────────────────────────────────
@@ -1574,7 +1575,7 @@ function actualizarHintComputoTerminos() {
   if (!el) return;
   const { inicio, etiqueta, pref } = resolverInicioComputo();
   if (!terminosPlantilla.length) {
-    el.innerHTML = 'Los plazos (días hábiles y acción) se detectan al <strong>extraer la cédula</strong> en el paso 1. Si no aparece ninguno, el documento no suele traer un plazo explícito.';
+    el.innerHTML = 'Los plazos se detectan del campo <strong>Actuación / Acuerdo notificado</strong> (paso 2) y del texto de la cédula (paso 1). Si editas la actuación, al entrar al paso 3 se vuelven a buscar plazos.';
     return;
   }
   if (!inicio) {
@@ -1613,7 +1614,7 @@ function renderTerminos() {
   const { inicio } = resolverInicioComputo();
   if (!terminos.length) {
     let msg = 'Aún no hay plazos calculados.';
-    if (!terminosPlantilla.length) msg = 'No se detectaron plazos en el texto. Extrae de nuevo la cédula en el paso 1 o revisa que el PDF tenga texto legible.';
+    if (!terminosPlantilla.length) msg = 'No se detectaron plazos. Revisa el campo <strong>Actuación / Acuerdo notificado</strong> en el paso 2 (ahí debe figurar el término, p. ej. tres días hábiles) o vuelve a extraer la cédula en el paso 1.';
     else if (!inicio) msg = 'Hay plazos detectados; indica al menos una fecha en el paso 2 (notificación o cédula) para ver vencimientos.';
     list.innerHTML = `<p style="font-size:13px;color:var(--muted);padding:12px 0">${msg}</p>`;
     return;
@@ -2080,6 +2081,44 @@ function consolidarTerminosDetectados(arr) {
   });
 }
 
+function combinarTerminosDetectados(listas) {
+  const porDias = new Map();
+  (listas || []).forEach(function (lista) {
+    (lista || []).forEach(function (t) {
+      if (!t || !t.dias || !t.accion) return;
+      const score = t._score != null ? t._score : puntajeAccionTermino(t.accion);
+      const prev = porDias.get(t.dias);
+      if (!prev || score > (prev._score != null ? prev._score : puntajeAccionTermino(prev.accion))) {
+        porDias.set(t.dias, { accion: t.accion, dias: t.dias, tipo: t.tipo || 'hábiles', _score: score });
+      }
+    });
+  });
+  return Array.from(porDias.values()).map(function (t) {
+    return { accion: t.accion, dias: t.dias, tipo: t.tipo };
+  });
+}
+
+function sincronizarTerminosPlantillaDesdeFormulario() {
+  const fuentes = [];
+  const actuacionEl = document.getElementById('exp-actuacion');
+  const actuacion = actuacionEl ? actuacionEl.value.trim() : '';
+  if (actuacion.length >= 12) {
+    fuentes.push(extractTerminosFromText(actuacion.replace(/\s+/g, ' '), actuacion));
+  }
+  if (lastCedulaRawText && lastCedulaRawText.length >= 20) {
+    const flat = lastCedulaRawText.replace(/\s+/g, ' ').trim();
+    fuentes.push(extractTerminosFromText(flat, lastCedulaRawText));
+  } else if (aiData && aiData.terminos && aiData.terminos.length) {
+    fuentes.push(aiData.terminos);
+  }
+  const merged = combinarTerminosDetectados(fuentes);
+  if (merged.length) {
+    terminosPlantilla = merged.map(function (t) {
+      return { accion: t.accion, dias: t.dias };
+    });
+  }
+}
+
 function extractTerminosFromText(flat, raw) {
   const out = [];
   const seen = new Set();
@@ -2174,7 +2213,11 @@ function parseCedulaHeuristics(raw) {
   else if (/\bpenal\b/i.test(flat)) out.materia = 'Penal';
   else if (/corporativ/i.test(flat)) out.materia = 'Corporativo';
 
-  out.terminos = extractTerminosFromText(flat, raw);
+  const terminosCedula = extractTerminosFromText(flat, raw);
+  const terminosActuacion = out.actuacion
+    ? extractTerminosFromText(out.actuacion.replace(/\s+/g, ' '), out.actuacion)
+    : [];
+  out.terminos = combinarTerminosDetectados([terminosActuacion, terminosCedula]);
 
   return out;
 }
@@ -2212,6 +2255,7 @@ async function analyzePDF() {
       throw new Error('No se obtuvo texto suficiente. Prueba una imagen más nítida, mayor resolución, o un PDF con texto seleccionable.');
     }
 
+    lastCedulaRawText = rawText;
     aiData = parseCedulaHeuristics(rawText);
 
     renderAIResult(aiData);
@@ -2295,8 +2339,8 @@ function applyExtractedFields(data, opts) {
     }
   }
 
-  terminosPlantilla = [];
-  if (data.terminos && data.terminos.length) {
+  sincronizarTerminosPlantillaDesdeFormulario();
+  if (!terminosPlantilla.length && data.terminos && data.terminos.length) {
     data.terminos.forEach(function (t) {
       if (t && t.dias && t.accion) {
         terminosPlantilla.push({ accion: t.accion, dias: t.dias });
@@ -2637,7 +2681,7 @@ function goToStep(n) {
   currentStep = n;
   window.scrollTo({top:0, behavior:'smooth'});
 
-  if (n === 3) recalcularTerminosPlazos();
+  if (n === 3) { sincronizarTerminosPlantillaDesdeFormulario(); recalcularTerminosPlazos(); }
   if (n === 4) renderRecipients();
 }
 
@@ -2662,6 +2706,18 @@ setLocalPdfOpenButton();
 
 document.getElementById('cedula-fecha').addEventListener('change', recalcularTerminosPlazos);
 document.getElementById('notif-fecha').addEventListener('change', recalcularTerminosPlazos);
+(function setupActuacionTerminosSync() {
+  const ta = document.getElementById('exp-actuacion');
+  if (!ta) return;
+  let timer = null;
+  ta.addEventListener('input', function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      sincronizarTerminosPlantillaDesdeFormulario();
+      recalcularTerminosPlazos();
+    }, 450);
+  });
+})();
 
 document.getElementById('btn-google-login').addEventListener('click', startGoogleLogin);
 document.getElementById('btn-save-client-id').addEventListener('click', saveOAuthClientIdFromInput);
