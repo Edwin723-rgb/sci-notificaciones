@@ -2020,30 +2020,83 @@ function extractActuacionFromText(raw, flat) {
   return m2 ? m2[1].trim().replace(/\s+/g, ' ').slice(0, 2000) : null;
 }
 
+/** Días en proveídos: dígitos o palabras (tres, quince, veintiuno, etc.). */
+var DIAS_POR_PALABRA = {
+  un: 1, uno: 1, una: 1,
+  dos: 2, tres: 3, cuatro: 4, cinco: 5,
+  seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+  once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+  veinte: 20, veintiuno: 21, veintidos: 22, 'veintidós': 22,
+  treinta: 30, cuarenta: 40, sesenta: 60, noventa: 90
+};
+var NUM_DIAS_PALABRAS = 'un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|veinte|veintiuno|veintid[oó]s|treinta|cuarenta|sesenta|noventa';
+var NUM_DIAS_ALT = '\\d{1,3}(?![a-záéíóúñ])|(?<![a-záéíóúñ])(?:' + NUM_DIAS_PALABRAS + ')(?![a-záéíóúñ])';
+var NUM_DIAS_CAP = '(' + NUM_DIAS_ALT + ')';
+
+function parseDiasCantidad(s) {
+  s = String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  return DIAS_POR_PALABRA[s] != null ? DIAS_POR_PALABRA[s] : NaN;
+}
+
+function limpiarAccionTermino(accion) {
+  var a = String(accion || '').replace(/\s+/g, ' ').trim();
+  a = a.replace(/^["']+|["']+$/g, '');
+  a = a.replace(/^[.,:\s–-]+|[.,:\s–-]+$/g, '');
+  a = a.replace(/^\(?[a-záéíóúñ]\)\s+/i, '');
+  var timing = /^(?:(?:contad[oa]s?\s+)?(?:a\s+partir\s+del\s+)?(?:d[ií]a\s+siguiente\s+)?(?:en\s+que\s+)?(?:surta\s+efectos\s+)?(?:la\s+)?(?:notificaci[oó]n\s+)?(?:del\s+presente\s+prove[ií]do\s*)?["',]?\s*)+/i;
+  var guard = 0;
+  while (timing.test(a) && guard++ < 6) a = a.replace(timing, '');
+  a = a.replace(/^a\s+partir\s+del\s+d[ií]a\s+siguiente[^,]*,?\s*/i, '');
+  if (a.length < 4) a = 'Cumplir lo ordenado en proveído';
+  return a.slice(0, 220);
+}
+
+function puntajeAccionTermino(accion) {
+  if (/^(mencione|conteste|presente|exhiba|comparezca|interponga|formule|cumpla|realice|designe|nombre)/i.test(accion)) return 100;
+  if (/Cumplir lo ordenado/i.test(accion)) return 15;
+  if (/surta\s+efectos|d[ií]a\s+siguiente|contad[oa]s/i.test(accion)) return 5;
+  return 40;
+}
+
 function pushTerminoUniq(arr, seen, dias, accion) {
-  const d = parseInt(dias, 10);
-  accion = String(accion || '').replace(/\s+/g, ' ').trim();
-  accion = accion.replace(/^[.,:\s–-]+|[.,:\s–-]+$/g, '');
-  accion = accion.replace(/^\(?[a-záéíóúñ]\)?\s*/i, '');
+  const d = parseDiasCantidad(dias);
+  accion = limpiarAccionTermino(accion);
   if (d < 1 || d > 120 || accion.length < 4) return;
   const key = d + '|' + accion.slice(0, 55).toLowerCase();
   if (seen.has(key)) return;
   seen.add(key);
-  arr.push({ accion: accion.slice(0, 220), dias: d, tipo: 'hábiles' });
+  arr.push({ accion: accion, dias: d, tipo: 'hábiles', _score: puntajeAccionTermino(accion) });
+}
+
+function consolidarTerminosDetectados(arr) {
+  const porDias = new Map();
+  arr.forEach(function (t) {
+    const prev = porDias.get(t.dias);
+    if (!prev || (t._score || 0) > (prev._score || 0)) porDias.set(t.dias, t);
+  });
+  return Array.from(porDias.values()).map(function (t) {
+    return { accion: t.accion, dias: t.dias, tipo: t.tipo };
+  });
 }
 
 function extractTerminosFromText(flat, raw) {
   const out = [];
   const seen = new Set();
+  const C = NUM_DIAS_CAP;
+  const A = NUM_DIAS_ALT;
+  const NL = String.fromCharCode(10);
+  const ACC = '[^.;' + NL + ']+';
   const regs = [
-    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+(?:corridos\s+)?(?:para\s+|a\s+)?([^.;\n]+?)(?=\s+(?:y\s+)?\d{1,3}\s*d[ií]as|\.|;|\n|$)/gi,
-    /plazo\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:corridos\s+)?(?:para\s+|a\s+)?([^.;\n]+)/gi,
-    /término\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:para\s+|a\s+)?([^.;\n]+)/gi,
-    /dentro\s+del\s+(?:plazo|término)\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:para\s+)?([^.;\n]+)/gi,
-    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+contad[oa]s?\s+(?:para\s+)?([^.;\n]+)/gi,
-    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+siguientes\s+(?:para\s+)?([^.;\n]+)/gi,
-    /para\s+que\s+(?:dentro\s+del\s+plazo\s+de\s+)?(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*,?\s*([^.;\n]+)/gi,
-    /bajo\s+apercibimiento[^.]{0,80}\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*[.,]?\s*([^.;\n]*)/gi
+    new RegExp(C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s+(?:corridos\\s+)?(?:para\\s+|a\\s+)?(' + ACC + '?)(?=\\s+(?:y\\s+)?(?:' + A + ')\\s*d[ií]as|\\.|;|' + NL + '|$)', 'gi'),
+    new RegExp('plazo\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*(?:corridos\\s+)?(?:para\\s+|a\\s+)?(' + ACC + ')', 'gi'),
+    new RegExp('t[eé]rmino\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*(?:para\\s+|a\\s+)?(' + ACC + ')', 'gi'),
+    new RegExp('dentro\\s+del\\s+(?:plazo|t[eé]rmino)\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?[^"\'.,;]*["\']?\\s*,?\\s*(' + ACC + ')', 'gi'),
+    new RegExp('dentro\\s+del\\s+(?:plazo|t[eé]rmino)\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*(?:para\\s+)?(' + ACC + ')', 'gi'),
+    new RegExp(C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s+contad[oa]s?\\s+(?:para\\s+)?(' + ACC + ')', 'gi'),
+    new RegExp(C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s+siguientes\\s+(?:para\\s+)?(' + ACC + ')', 'gi'),
+    new RegExp('para\\s+que\\s+(?:dentro\\s+del\\s+plazo\\s+de\\s+)?["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*,?\\s*(' + ACC + ')', 'gi'),
+    new RegExp('bajo\\s+apercibimiento[^.]{0,80}\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*[.,]?\\s*(' + ACC + ')', 'gi')
   ];
   for (let r = 0; r < regs.length; r++) {
     let tm;
@@ -2055,13 +2108,13 @@ function extractTerminosFromText(flat, raw) {
   }
   const flatCaps = flat.toUpperCase();
   if (flatCaps.indexOf('DÍA') !== -1 && flatCaps.indexOf('HÁBIL') !== -1) {
-    const reLoose = /(\d{1,3})\s*D[IÍ]AS\s*H[AÁ]B[IÍ]?LES\s+PARA\s+([^.;\n]{6,180})/gi;
+    const reLoose = new RegExp(C + '\\s*D[IÍ]AS\\s*H[AÁ]B[IÍ]?LES\\s+PARA\\s+([^.;\\n]{6,180})', 'gi');
     let tm2;
     while ((tm2 = reLoose.exec(flat)) !== null) {
       pushTerminoUniq(out, seen, tm2[1], tm2[2]);
     }
   }
-  return out;
+  return consolidarTerminosDetectados(out);
 }
 
 function parseCedulaHeuristics(raw) {
