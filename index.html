@@ -290,6 +290,16 @@
     color: var(--navy); margin-bottom: 4px;
   }
   .preview-email-body .subtitle { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+  .preview-pdf-wrap {
+    margin: 0 24px 24px; padding: 16px; background: var(--cream);
+    border: 1px solid var(--border); border-radius: 10px;
+  }
+  .preview-pdf-wrap h3 { font-size: 13px; font-weight: 700; color: var(--navy); margin: 0 0 10px; }
+  .preview-pdf-frame {
+    width: 100%; height: min(520px, 70vh); border: 1px solid var(--border);
+    border-radius: 8px; background: #fff;
+  }
+  .preview-pdf-caption { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
   .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
   .info-table td { padding: 9px 12px; font-size: 13px; border-bottom: 1px solid var(--cream2); }
   .info-table td:first-child { font-weight: 600; color: var(--navy); width: 160px; background: var(--cream); }
@@ -391,7 +401,7 @@
     <button type="button" class="ai-btn" id="btn-google-login" style="width:100%">Iniciar sesión con Google</button>
     <p id="login-error" class="login-error"></p>
     <p class="login-hint">
-      <strong>Paso 1:</strong> en <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a> crea un ID de cliente OAuth tipo &quot;Aplicación web&quot;, activa en el mismo proyecto <strong>Gmail API</strong> y <strong>Google Calendar API</strong>, y en &quot;Orígenes JavaScript autorizados&quot; agrega tu URL de Vercel y <code>http://localhost</code>. Copia el Client ID y pégalo arriba → Guardar.<br>
+      <strong>Paso 1:</strong> en <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a> crea un ID de cliente OAuth tipo &quot;Aplicación web&quot;, activa en el mismo proyecto <strong>Gmail API</strong>, <strong>Google Calendar API</strong> y <strong>Google Drive API</strong>, y en &quot;Orígenes JavaScript autorizados&quot; agrega tu URL de Vercel y <code>http://localhost</code>. Copia el Client ID y pégalo arriba → Guardar.<br>
       Tras actualizar permisos (Calendar), usa <strong>Cerrar sesión</strong> y vuelve a entrar una vez para autorizar todo.<br>
       <strong>Paso 2:</strong> si la app está en modo prueba, añade como <strong>usuarios de prueba</strong> en la pantalla de consentimiento OAuth todos los correos con los que iniciarán sesión (incluye cuentas corporativas <em>y</em> personales como Hotmail si las usan Alejandra e Ingrid).<br>
       Opcional: también puedes pegar el ID en el código (<code>window.__SCI_GOOGLE_CLIENT_ID__</code>) o abrir la página con <code>?client_id=TU_ID</code>.
@@ -584,7 +594,7 @@
         Términos y Plazos
       </div>
       <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
-        Los plazos se obtienen del campo <strong>Actuación / Acuerdo notificado</strong> (paso 2) y del texto de la cédula (paso 1); los <strong>vencimientos se calculan solos</strong> con <strong>días hábiles</strong> (calendario SCJN 2026), usando la <strong>fecha de notificación</strong> del paso 2; si no está, la <strong>fecha de la cédula</strong>.
+        Los plazos se obtienen del texto de la cédula (paso 1) y los <strong>vencimientos se calculan solos</strong> con <strong>días hábiles</strong> (calendario SCJN 2026), usando la <strong>fecha de notificación</strong> del paso 2; si no está, la <strong>fecha de la cédula</strong>.
       </p>
       <p id="terminos-computo-hint" style="font-size:12px;color:var(--navy);margin-bottom:14px;padding:10px 12px;background:var(--cream2);border-radius:8px;border-left:3px solid var(--gold);"></p>
       <div id="terminos-list"></div>
@@ -659,7 +669,11 @@
         <div class="preview-email-body">
           <div id="prev-body-html"></div>
         </div>
-      </div>
+        <div id="prev-pdf-section" class="preview-pdf-wrap" style="display:none">
+          <h3>📎 Cédula de notificación (PDF)</h3>
+          <iframe id="prev-pdf-frame" class="preview-pdf-frame" title="Vista previa de la cédula PDF"></iframe>
+          <p id="prev-pdf-caption" class="preview-pdf-caption"></p>
+        </div>
     </div>
     <div class="nav-btns" style="flex-wrap:wrap">
       <button class="ai-btn secondary" onclick="goToStep(4)">← Editar</button>
@@ -717,8 +731,8 @@ let aiData = null;
 let terminos = [];
 /** Plazos detectados en el texto ({ días, acción }); el vencimiento se deriva de las fechas del paso 2. */
 let terminosPlantilla = [];
-let lastCedulaRawText = '';
 let lastCreatedCalendarEventUrl = '';
+let previewPdfObjectUrl = null;
 
 // ── DÍAS INHÁBILES SCJN 2026 ───────────────────────────────────────────────────
 const INHABILES_2026_RAW = [
@@ -761,50 +775,18 @@ function isInhabil(date) {
   return INHABILES_SET.has(key);
 }
 
-function siguienteDiaHabil(dateStr) {
-  let d = new Date(dateStr + 'T12:00:00');
-  do { d.setDate(d.getDate() + 1); } while (isInhabil(d));
-  return d.toISOString().slice(0, 10);
-}
-
-function detectarTipoComputoDesdeTexto(texto) {
-  const t = String(texto || '').toLowerCase().replace(/\s+/g, ' ');
-  if (/contad[oa]s?\s+a\s+partir\s+del\s+d[ií]a\s+siguiente\s+en\s+que\s+surta\s+efectos|d[ií]a\s+siguiente\s+en\s+que\s+surta\s+efectos\s+la\s+notificaci[oó]n/.test(t)) {
-    return 'dia_siguiente_tras_surte';
-  }
-  return 'desde_surte';
-}
-
-function obtenerTextoReferenciaComputo() {
-  const act = document.getElementById('exp-actuacion');
-  const a = act ? act.value.trim() : '';
-  return (a + ' ' + (lastCedulaRawText || '')).trim();
-}
-
-function resolverEtapasComputo(fechaNotificacionOCedula, tipoComputo) {
-  const notificacion = fechaNotificacionOCedula;
-  const surteEfectos = siguienteDiaHabil(notificacion);
-  let inicioComputo = surteEfectos;
-  if (tipoComputo === 'dia_siguiente_tras_surte') {
-    inicioComputo = siguienteDiaHabil(surteEfectos);
-  }
-  return { notificacion: notificacion, surteEfectos: surteEfectos, inicioComputo: inicioComputo };
-}
-
-function vencimientoTrasDiasHabiles(inicioComputoStr, dias) {
-  let d = new Date(inicioComputoStr + 'T12:00:00');
-  let counted = 0;
-  while (counted < dias) {
-    if (!isInhabil(d)) counted++;
-    if (counted < dias) d.setDate(d.getDate() + 1);
-  }
-  while (isInhabil(d)) d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
-
 function addBusinessDays(startDateStr, days) {
-  const etapas = resolverEtapasComputo(startDateStr, detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo()));
-  return vencimientoTrasDiasHabiles(etapas.inicioComputo, days);
+  let d = new Date(startDateStr + 'T12:00:00');
+  // move to next business day to start count
+  d.setDate(d.getDate() + 1);
+  let counted = 0;
+  while (counted < days) {
+    if (!isInhabil(d)) counted++;
+    if (counted < days) d.setDate(d.getDate() + 1);
+  }
+  // if landing date is inhábil, move forward
+  while (isInhabil(d)) d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0,10);
 }
 
 function formatDate(str) {
@@ -883,7 +865,8 @@ function urgenciaLabel(dias) {
 const GOOGLE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/calendar.events'
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/drive.file'
 ].join(' ');
 let tokenClient = null;
 let gmailAccessToken = null;
@@ -1191,7 +1174,7 @@ function formatCalendarApiError(rawMsg) {
     return 'La Google Calendar API no está activada.\n\nActivar:\n' + enableUrl + '\n\nLuego espera unos minutos y vuelve a intentar.';
   }
   if (/insufficient authentication scopes|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(m)) {
-    return 'Falta permiso de Calendar. Pulsa «Cerrar sesión» arriba y vuelve a entrar con Google para autorizar Gmail y Calendar.';
+    return 'Falta permiso de Google (Calendar o Drive). Pulsa «Cerrar sesión» y vuelve a entrar para autorizar Gmail, Calendar y adjuntar el PDF.';
   }
   return m;
 }
@@ -1378,8 +1361,19 @@ async function createSciCalendarEvents(accessToken, payload) {
   const numero = payload.numero || '';
   const cliente = payload.cliente || '';
   const abogado = payload.abogado || '';
+  let calendarAttachments = [];
+  let drivePdfUrl = '';
+  if (payload.pdfBase64 && String(payload.pdfBase64).length > 50) {
+    try {
+      const driveFile = await driveUploadPdfForCalendar(accessToken, payload.pdfName, payload.pdfBase64);
+      drivePdfUrl = driveFile.fileUrl;
+      calendarAttachments = [{ fileUrl: driveFile.fileUrl, title: driveFile.title, mimeType: driveFile.mimeType }];
+    } catch (driveErr) {
+      console.warn('No se pudo adjuntar PDF en Drive:', driveErr);
+    }
+  }
   const pdfLine = payload.pdfName
-    ? ('\nPDF de cédula: ' + payload.pdfName + (payload.pdfBase64 ? ' (cargado en esta notificación)' : ' (sin archivo cargado)'))
+    ? ('\nPDF de cédula: ' + payload.pdfName + (drivePdfUrl ? ('\nVer / descargar: ' + drivePdfUrl) : (payload.pdfBase64 ? ' (sin adjunto en Calendar; vuelve a entrar con Google)' : ' (sin archivo cargado)')))
     : '\nPDF de cédula: no especificado';
   const abogadoLine = abogado ? ('\nAbogado responsable: ' + abogado) : '';
   const tipoLabel = payload.tipoBodyFieldLabel || 'Expediente';
@@ -1478,10 +1472,16 @@ async function createSciCalendarEvents(accessToken, payload) {
     });
   }
 
+  function applyCalendarPdfAttachment(ev) {
+    if (calendarAttachments.length) ev.attachments = calendarAttachments;
+    return ev;
+  }
+
   let created = 0;
   const links = [];
   let inviteNotifyOk = true;
   for (let i = 0; i < evs.length; i++) {
+    applyCalendarPdfAttachment(evs[i]);
     const createdEvent = await calendarApiCreateEvent(accessToken, evs[i], 'none');
     if (createdEvent && createdEvent.htmlLink) links.push(createdEvent.htmlLink);
     if (createdEvent && createdEvent.id && attendeeObjs.length) {
@@ -1530,6 +1530,62 @@ function openLastCreatedCalendarEvent() {
     return;
   }
   window.open(lastCreatedCalendarEventUrl, '_blank', 'noopener');
+}
+
+
+function revokePreviewPdfObjectUrl() {
+  if (previewPdfObjectUrl) {
+    URL.revokeObjectURL(previewPdfObjectUrl);
+    previewPdfObjectUrl = null;
+  }
+}
+
+function renderPreviewPdfEmbed() {
+  const section = document.getElementById('prev-pdf-section');
+  const frame = document.getElementById('prev-pdf-frame');
+  const caption = document.getElementById('prev-pdf-caption');
+  if (!section || !frame) return;
+  revokePreviewPdfObjectUrl();
+  if (!pdfFile) {
+    section.style.display = 'none';
+    frame.removeAttribute('src');
+    if (caption) caption.textContent = '';
+    return;
+  }
+  previewPdfObjectUrl = URL.createObjectURL(pdfFile);
+  frame.src = previewPdfObjectUrl;
+  section.style.display = 'block';
+  if (caption) {
+    caption.textContent = 'Al agendar en Calendar o enviar por Gmail, este archivo («' + pdfFile.name + '») se adjunta al evento o al correo.';
+  }
+}
+
+async function driveUploadPdfForCalendar(accessToken, fileName, base64) {
+  const clean = String(base64 || '').replace(/\s/g, '');
+  if (clean.length < 50) throw new Error('PDF vacío o no cargado');
+  const bytes = Uint8Array.from(atob(clean), function (c) { return c.charCodeAt(0); });
+  const safeName = (fileName || 'cedula.pdf').replace(/[\r\n"]/g, '');
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({ name: safeName, mimeType: 'application/pdf' })], { type: 'application/json' }));
+  form.append('file', new Blob([bytes], { type: 'application/pdf' }), safeName);
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,mimeType', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken },
+    body: form
+  });
+  if (!res.ok) throw new Error(await res.text() || 'Error al subir PDF a Drive');
+  const file = await res.json();
+  await fetch('https://www.googleapis.com/drive/v3/files/' + file.id + '/permissions', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'reader', type: 'anyone' })
+  });
+  return {
+    fileId: file.id,
+    fileUrl: 'https://drive.google.com/file/d/' + file.id + '/view',
+    title: safeName,
+    mimeType: 'application/pdf'
+  };
 }
 
 function setLocalPdfOpenButton() {
@@ -1607,7 +1663,7 @@ function actualizarHintComputoTerminos() {
   if (!el) return;
   const { inicio, etiqueta, pref } = resolverInicioComputo();
   if (!terminosPlantilla.length) {
-    el.innerHTML = 'Los plazos se detectan del campo <strong>Actuación / Acuerdo notificado</strong> (paso 2) y del texto de la cédula (paso 1). Si editas la actuación, al entrar al paso 3 se vuelven a buscar plazos.';
+    el.innerHTML = 'Los plazos (días hábiles y acción) se detectan al <strong>extraer la cédula</strong> en el paso 1. Si no aparece ninguno, el documento no suele traer un plazo explícito.';
     return;
   }
   if (!inicio) {
@@ -1618,32 +1674,21 @@ function actualizarHintComputoTerminos() {
   if (pref === 'cedula') {
     extra = ' Cuando tengas la fecha en que se notificó personalmente, colócala en el paso 2 para recalcular desde esa fecha.';
   }
-  const tipo = detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo());
-  const etapas = resolverEtapasComputo(inicio, tipo);
-  const notaCorre = etapas.inicioComputo === etapas.surteEfectos
-    ? 'mismo día en que surte efectos'
-    : 'día hábil siguiente a que surte efectos';
-  el.innerHTML = 'Cómputo: <strong>notifica</strong> (' + formatDate(etapas.notificacion) + ') → <strong>surte efectos</strong> (' + formatDate(etapas.surteEfectos) + ') → <strong>corre el plazo</strong> desde el ' + formatDate(etapas.inicioComputo) + ' (' + notaCorre + ').' + extra;
+  el.innerHTML = `Vencimientos con <strong>días hábiles</strong> desde la <strong>${etiqueta}</strong> (${formatDate(inicio)}).` + extra;
 }
 
 /** Reconstruye <code>terminos</code> a partir de la plantilla extraída y las fechas del formulario. */
 function recalcularTerminosPlazos() {
   const { inicio, pref } = resolverInicioComputo();
-  const tipoDefault = detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo());
   terminos = [];
   if (inicio && terminosPlantilla.length) {
     terminosPlantilla.forEach(function (t) {
       if (!t || !t.dias || !t.accion) return;
-      const tipo = t.tipoComputo || tipoDefault;
-      const etapas = resolverEtapasComputo(inicio, tipo);
       terminos.push({
         accion: t.accion,
         dias: t.dias,
-        fechaNotificacion: etapas.notificacion,
-        surteEfectos: etapas.surteEfectos,
-        inicio: etapas.inicioComputo,
-        vencimiento: vencimientoTrasDiasHabiles(etapas.inicioComputo, t.dias),
-        tipoComputo: tipo,
+        inicio: inicio,
+        vencimiento: addBusinessDays(inicio, t.dias),
         computoDesde: pref
       });
     });
@@ -1657,7 +1702,7 @@ function renderTerminos() {
   const { inicio } = resolverInicioComputo();
   if (!terminos.length) {
     let msg = 'Aún no hay plazos calculados.';
-    if (!terminosPlantilla.length) msg = 'No se detectaron plazos. Revisa el campo <strong>Actuación / Acuerdo notificado</strong> en el paso 2 (ahí debe figurar el término, p. ej. tres días hábiles) o vuelve a extraer la cédula en el paso 1.';
+    if (!terminosPlantilla.length) msg = 'No se detectaron plazos en el texto. Extrae de nuevo la cédula en el paso 1 o revisa que el PDF tenga texto legible.';
     else if (!inicio) msg = 'Hay plazos detectados; indica al menos una fecha en el paso 2 (notificación o cédula) para ver vencimientos.';
     list.innerHTML = `<p style="font-size:13px;color:var(--muted);padding:12px 0">${msg}</p>`;
     return;
@@ -1673,9 +1718,7 @@ function renderTerminos() {
       </div>
       <div class="termino-dates">
         <span><strong>${t.dias} días hábiles</strong></span>
-        <span>Notificación: <strong>${formatDate(t.fechaNotificacion || t.inicio)}</strong></span>
-        <span>Surte efectos: <strong>${formatDate(t.surteEfectos || t.inicio)}</strong></span>
-        <span>Corre el plazo (inicia): <strong>${formatDate(t.inicio)}</strong></span>
+        <span>Inicia cómputo: <strong>${formatDate(t.inicio)}</strong></span>
         <span>Vence: <strong>${formatDate(t.vencimiento)}</strong></span>
       </div>
     </div>`;
@@ -1762,6 +1805,7 @@ function handleFile(file) {
 }
 
 function removeFile() {
+  revokePreviewPdfObjectUrl();
   pdfFile = null; pdfBase64 = null;
   document.getElementById('pdf-input').value = '';
   document.getElementById('file-info').classList.remove('show');
@@ -2066,122 +2110,30 @@ function extractActuacionFromText(raw, flat) {
   return m2 ? m2[1].trim().replace(/\s+/g, ' ').slice(0, 2000) : null;
 }
 
-/** Días en proveídos: dígitos o palabras (tres, quince, veintiuno, etc.). */
-var DIAS_POR_PALABRA = {
-  un: 1, uno: 1, una: 1,
-  dos: 2, tres: 3, cuatro: 4, cinco: 5,
-  seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
-  once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
-  veinte: 20, veintiuno: 21, veintidos: 22, 'veintidós': 22,
-  treinta: 30, cuarenta: 40, sesenta: 60, noventa: 90
-};
-var NUM_DIAS_PALABRAS = 'un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|veinte|veintiuno|veintid[oó]s|treinta|cuarenta|sesenta|noventa';
-var NUM_DIAS_ALT = '\\d{1,3}(?![a-záéíóúñ])|(?<![a-záéíóúñ])(?:' + NUM_DIAS_PALABRAS + ')(?![a-záéíóúñ])';
-var NUM_DIAS_CAP = '(' + NUM_DIAS_ALT + ')';
-
-function parseDiasCantidad(s) {
-  s = String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  if (/^\d+$/.test(s)) return parseInt(s, 10);
-  return DIAS_POR_PALABRA[s] != null ? DIAS_POR_PALABRA[s] : NaN;
-}
-
-function limpiarAccionTermino(accion) {
-  var a = String(accion || '').replace(/\s+/g, ' ').trim();
-  a = a.replace(/^["']+|["']+$/g, '');
-  a = a.replace(/^[.,:\s–-]+|[.,:\s–-]+$/g, '');
-  a = a.replace(/^\(?[a-záéíóúñ]\)\s+/i, '');
-  var timing = /^(?:(?:contad[oa]s?\s+)?(?:a\s+partir\s+del\s+)?(?:d[ií]a\s+siguiente\s+)?(?:en\s+que\s+)?(?:surta\s+efectos\s+)?(?:la\s+)?(?:notificaci[oó]n\s+)?(?:del\s+presente\s+prove[ií]do\s*)?["',]?\s*)+/i;
-  var guard = 0;
-  while (timing.test(a) && guard++ < 6) a = a.replace(timing, '');
-  a = a.replace(/^a\s+partir\s+del\s+d[ií]a\s+siguiente[^,]*,?\s*/i, '');
-  if (a.length < 4) a = 'Cumplir lo ordenado en proveído';
-  return a.slice(0, 220);
-}
-
-function puntajeAccionTermino(accion) {
-  if (/^(mencione|conteste|presente|exhiba|comparezca|interponga|formule|cumpla|realice|designe|nombre)/i.test(accion)) return 100;
-  if (/Cumplir lo ordenado/i.test(accion)) return 15;
-  if (/surta\s+efectos|d[ií]a\s+siguiente|contad[oa]s/i.test(accion)) return 5;
-  return 40;
-}
-
 function pushTerminoUniq(arr, seen, dias, accion) {
-  const d = parseDiasCantidad(dias);
-  accion = limpiarAccionTermino(accion);
+  const d = parseInt(dias, 10);
+  accion = String(accion || '').replace(/\s+/g, ' ').trim();
+  accion = accion.replace(/^[.,:\s–-]+|[.,:\s–-]+$/g, '');
+  accion = accion.replace(/^\(?[a-záéíóúñ]\)?\s*/i, '');
   if (d < 1 || d > 120 || accion.length < 4) return;
   const key = d + '|' + accion.slice(0, 55).toLowerCase();
   if (seen.has(key)) return;
   seen.add(key);
-  arr.push({ accion: accion, dias: d, tipo: 'hábiles', _score: puntajeAccionTermino(accion) });
-}
-
-function consolidarTerminosDetectados(arr) {
-  const porDias = new Map();
-  arr.forEach(function (t) {
-    const prev = porDias.get(t.dias);
-    if (!prev || (t._score || 0) > (prev._score || 0)) porDias.set(t.dias, t);
-  });
-  return Array.from(porDias.values()).map(function (t) {
-    return { accion: t.accion, dias: t.dias, tipo: t.tipo };
-  });
-}
-
-function combinarTerminosDetectados(listas) {
-  const porDias = new Map();
-  (listas || []).forEach(function (lista) {
-    (lista || []).forEach(function (t) {
-      if (!t || !t.dias || !t.accion) return;
-      const score = t._score != null ? t._score : puntajeAccionTermino(t.accion);
-      const prev = porDias.get(t.dias);
-      if (!prev || score > (prev._score != null ? prev._score : puntajeAccionTermino(prev.accion))) {
-        porDias.set(t.dias, { accion: t.accion, dias: t.dias, tipo: t.tipo || 'hábiles', _score: score });
-      }
-    });
-  });
-  return Array.from(porDias.values()).map(function (t) {
-    return { accion: t.accion, dias: t.dias, tipo: t.tipo };
-  });
-}
-
-function sincronizarTerminosPlantillaDesdeFormulario() {
-  const fuentes = [];
-  const actuacionEl = document.getElementById('exp-actuacion');
-  const actuacion = actuacionEl ? actuacionEl.value.trim() : '';
-  if (actuacion.length >= 12) {
-    fuentes.push(extractTerminosFromText(actuacion.replace(/\s+/g, ' '), actuacion));
-  }
-  if (lastCedulaRawText && lastCedulaRawText.length >= 20) {
-    const flat = lastCedulaRawText.replace(/\s+/g, ' ').trim();
-    fuentes.push(extractTerminosFromText(flat, lastCedulaRawText));
-  } else if (aiData && aiData.terminos && aiData.terminos.length) {
-    fuentes.push(aiData.terminos);
-  }
-  const merged = combinarTerminosDetectados(fuentes);
-  if (merged.length) {
-    const tipo = detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo());
-    terminosPlantilla = merged.map(function (t) {
-      return { accion: t.accion, dias: t.dias, tipoComputo: tipo };
-    });
-  }
+  arr.push({ accion: accion.slice(0, 220), dias: d, tipo: 'hábiles' });
 }
 
 function extractTerminosFromText(flat, raw) {
   const out = [];
   const seen = new Set();
-  const C = NUM_DIAS_CAP;
-  const A = NUM_DIAS_ALT;
-  const NL = String.fromCharCode(10);
-  const ACC = '[^.;' + NL + ']+';
   const regs = [
-    new RegExp(C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s+(?:corridos\\s+)?(?:para\\s+|a\\s+)?(' + ACC + '?)(?=\\s+(?:y\\s+)?(?:' + A + ')\\s*d[ií]as|\\.|;|' + NL + '|$)', 'gi'),
-    new RegExp('plazo\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*(?:corridos\\s+)?(?:para\\s+|a\\s+)?(' + ACC + ')', 'gi'),
-    new RegExp('t[eé]rmino\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*(?:para\\s+|a\\s+)?(' + ACC + ')', 'gi'),
-    new RegExp('dentro\\s+del\\s+(?:plazo|t[eé]rmino)\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?[^"\'.,;]*["\']?\\s*,?\\s*(' + ACC + ')', 'gi'),
-    new RegExp('dentro\\s+del\\s+(?:plazo|t[eé]rmino)\\s+de\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*(?:para\\s+)?(' + ACC + ')', 'gi'),
-    new RegExp(C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s+contad[oa]s?\\s+(?:para\\s+)?(' + ACC + ')', 'gi'),
-    new RegExp(C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s+siguientes\\s+(?:para\\s+)?(' + ACC + ')', 'gi'),
-    new RegExp('para\\s+que\\s+(?:dentro\\s+del\\s+plazo\\s+de\\s+)?["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*,?\\s*(' + ACC + ')', 'gi'),
-    new RegExp('bajo\\s+apercibimiento[^.]{0,80}\\s+["\']?\\s*' + C + '\\s*d[ií]as?\\s*h[aá]b[ií]?les?\\s*[.,]?\\s*(' + ACC + ')', 'gi')
+    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+(?:corridos\s+)?(?:para\s+|a\s+)?([^.;\n]+?)(?=\s+(?:y\s+)?\d{1,3}\s*d[ií]as|\.|;|\n|$)/gi,
+    /plazo\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:corridos\s+)?(?:para\s+|a\s+)?([^.;\n]+)/gi,
+    /término\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:para\s+|a\s+)?([^.;\n]+)/gi,
+    /dentro\s+del\s+(?:plazo|término)\s+de\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*(?:para\s+)?([^.;\n]+)/gi,
+    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+contad[oa]s?\s+(?:para\s+)?([^.;\n]+)/gi,
+    /(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s+siguientes\s+(?:para\s+)?([^.;\n]+)/gi,
+    /para\s+que\s+(?:dentro\s+del\s+plazo\s+de\s+)?(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*,?\s*([^.;\n]+)/gi,
+    /bajo\s+apercibimiento[^.]{0,80}\s+(\d{1,3})\s*d[ií]as?\s*h[aá]b[ií]?les?\s*[.,]?\s*([^.;\n]*)/gi
   ];
   for (let r = 0; r < regs.length; r++) {
     let tm;
@@ -2193,13 +2145,13 @@ function extractTerminosFromText(flat, raw) {
   }
   const flatCaps = flat.toUpperCase();
   if (flatCaps.indexOf('DÍA') !== -1 && flatCaps.indexOf('HÁBIL') !== -1) {
-    const reLoose = new RegExp(C + '\\s*D[IÍ]AS\\s*H[AÁ]B[IÍ]?LES\\s+PARA\\s+([^.;\\n]{6,180})', 'gi');
+    const reLoose = /(\d{1,3})\s*D[IÍ]AS\s*H[AÁ]B[IÍ]?LES\s+PARA\s+([^.;\n]{6,180})/gi;
     let tm2;
     while ((tm2 = reLoose.exec(flat)) !== null) {
       pushTerminoUniq(out, seen, tm2[1], tm2[2]);
     }
   }
-  return consolidarTerminosDetectados(out);
+  return out;
 }
 
 function parseCedulaHeuristics(raw) {
@@ -2259,11 +2211,7 @@ function parseCedulaHeuristics(raw) {
   else if (/\bpenal\b/i.test(flat)) out.materia = 'Penal';
   else if (/corporativ/i.test(flat)) out.materia = 'Corporativo';
 
-  const terminosCedula = extractTerminosFromText(flat, raw);
-  const terminosActuacion = out.actuacion
-    ? extractTerminosFromText(out.actuacion.replace(/\s+/g, ' '), out.actuacion)
-    : [];
-  out.terminos = combinarTerminosDetectados([terminosActuacion, terminosCedula]);
+  out.terminos = extractTerminosFromText(flat, raw);
 
   return out;
 }
@@ -2301,7 +2249,6 @@ async function analyzePDF() {
       throw new Error('No se obtuvo texto suficiente. Prueba una imagen más nítida, mayor resolución, o un PDF con texto seleccionable.');
     }
 
-    lastCedulaRawText = rawText;
     aiData = parseCedulaHeuristics(rawText);
 
     renderAIResult(aiData);
@@ -2385,11 +2332,11 @@ function applyExtractedFields(data, opts) {
     }
   }
 
-  sincronizarTerminosPlantillaDesdeFormulario();
-  if (!terminosPlantilla.length && data.terminos && data.terminos.length) {
+  terminosPlantilla = [];
+  if (data.terminos && data.terminos.length) {
     data.terminos.forEach(function (t) {
       if (t && t.dias && t.accion) {
-        terminosPlantilla.push({ accion: t.accion, dias: t.dias, tipoComputo: detectarTipoComputoDesdeTexto(obtenerTextoReferenciaComputo()) });
+        terminosPlantilla.push({ accion: t.accion, dias: t.dias });
       }
     });
   }
@@ -2502,11 +2449,14 @@ function buildPreview() {
     </div>` : ''}
 
     <p style="margin-top:24px;font-size:12px;color:#6b7280;border-top:1px solid #f0eade;padding-top:14px">
-      📎 Se adjunta la cédula de notificación: <strong>${fileName}</strong><br>
+      ${pdfFile
+        ? '📎 La cédula PDF se muestra abajo y se adjuntará al <strong>correo Gmail</strong> y a los eventos de <strong>Google Calendar</strong> (vía Drive).'
+        : '⚠️ No hay PDF cargado en el paso 1; el correo y Calendar irán sin cédula adjunta.'}<br>
       <em>Este mensaje fue generado por el sistema de notificaciones de SCI Despacho Jurídico. Favor de verificar los datos antes de actuar.</em>
     </p>`;
 
   document.getElementById('prev-body-html').innerHTML = bodyHTML;
+  renderPreviewPdfEmbed();
 }
 
 function row(label, val) {
@@ -2686,6 +2636,7 @@ async function sendCalendarOnly() {
     const cr = await createSciCalendarEvents(token, payload);
     setCalendarEventOpenButton(cr.firstUrl);
     let msg = '✅ Calendar: ' + cr.created + ' evento(s). Invitaciones dirigidas a ' + (cr.inviteeCount || 0) + ' correo(s).';
+    if (payload.pdfBase64 && payload.pdfBase64.length > 50) msg += ' PDF de cédula adjunto en el evento.';
     if (cr.inviteNotifyOk === false) {
       msg += ' Revisa en Google Calendar el evento y, si hace falta, usa «Enviar actualización a los invitados».';
     }
@@ -2727,7 +2678,7 @@ function goToStep(n) {
   currentStep = n;
   window.scrollTo({top:0, behavior:'smooth'});
 
-  if (n === 3) { sincronizarTerminosPlantillaDesdeFormulario(); recalcularTerminosPlazos(); }
+  if (n === 3) recalcularTerminosPlazos();
   if (n === 4) renderRecipients();
 }
 
@@ -2752,18 +2703,6 @@ setLocalPdfOpenButton();
 
 document.getElementById('cedula-fecha').addEventListener('change', recalcularTerminosPlazos);
 document.getElementById('notif-fecha').addEventListener('change', recalcularTerminosPlazos);
-(function setupActuacionTerminosSync() {
-  const ta = document.getElementById('exp-actuacion');
-  if (!ta) return;
-  let timer = null;
-  ta.addEventListener('input', function () {
-    clearTimeout(timer);
-    timer = setTimeout(function () {
-      sincronizarTerminosPlantillaDesdeFormulario();
-      recalcularTerminosPlazos();
-    }, 450);
-  });
-})();
 
 document.getElementById('btn-google-login').addEventListener('click', startGoogleLogin);
 document.getElementById('btn-save-client-id').addEventListener('click', saveOAuthClientIdFromInput);
