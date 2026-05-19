@@ -660,6 +660,27 @@
       <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
         Revisa el correo antes de enviarlo. Puedes regresar a editar cualquier dato.
       </p>
+      <div id="prev-diligencia-section" style="margin-bottom:20px;padding:16px 18px;background:var(--cream);border:1px solid var(--border);border-radius:10px">
+        <p style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">📅 Diligencia o audiencia en Google Calendar</p>
+        <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:14px;font-weight:500;margin-bottom:12px;cursor:pointer">
+          <input type="checkbox" id="prev-diligencia-agendar" checked style="width:auto;accent-color:var(--navy)" onchange="updatePreviewDiligenciaStatus()">
+          Agendar diligencia / audiencia (además de los plazos)
+        </label>
+        <div class="form-grid" style="margin-bottom:10px">
+          <div class="field">
+            <label for="prev-diligencia-fecha">Fecha de la diligencia</label>
+            <input type="date" id="prev-diligencia-fecha" onchange="updatePreviewDiligenciaStatus()">
+          </div>
+          <div class="field">
+            <label for="prev-diligencia-hora">Hora</label>
+            <input type="time" id="prev-diligencia-hora" onchange="updatePreviewDiligenciaStatus()">
+          </div>
+        </div>
+        <p id="prev-diligencia-status" style="font-size:12px;color:var(--muted);margin:0"></p>
+        <p style="font-size:12px;color:var(--green);margin-top:8px;margin-bottom:0">
+          Recordatorio en Calendar: <strong>30 minutos antes</strong> (correo y aviso emergente).
+        </p>
+      </div>
       <div class="preview-email">
         <div class="preview-email-header">
           <div class="email-row"><span>Para:</span> <span id="prev-to"></span></div>
@@ -689,7 +710,7 @@
       </button>
     </div>
     <p style="margin-top:10px;font-size:12px;color:var(--muted)">
-      Calendar usa la misma tabla de plazos y los correos del paso 4. El correo con el que iniciaste sesión no se duplica como invitado (eres el organizador). Los demás deberían recibir invitación; si alguien la filtra, suele ser su ajuste de Calendar «solo remitentes conocidos».
+      Calendar usa la tabla de plazos, la diligencia que ajustes arriba (aviso 30 min antes) y los correos del paso 4. El correo con el que iniciaste sesión no se duplica como invitado (eres el organizador). Los demás deberían recibir invitación; si alguien la filtra, suele ser su ajuste de Calendar «solo remitentes conocidos».
     </p>
     <div class="alert success" id="sent-alert" style="margin-top:16px">
       ✅ Correo enviado desde tu cuenta Gmail.
@@ -1336,6 +1357,102 @@ function extractTimeHmFromSpanishText(text) {
   return '';
 }
 
+function calendarReminders30MinBefore() {
+  return {
+    useDefault: false,
+    overrides: [
+      { method: 'popup', minutes: 30 },
+      { method: 'email', minutes: 30 }
+    ]
+  };
+}
+
+function getPreviewDiligenciaInputs() {
+  const agendarEl = document.getElementById('prev-diligencia-agendar');
+  const fechaEl = document.getElementById('prev-diligencia-fecha');
+  const horaEl = document.getElementById('prev-diligencia-hora');
+  return {
+    agendar: agendarEl ? !!agendarEl.checked : false,
+    fecha: fechaEl ? String(fechaEl.value || '').trim() : '',
+    hora: horaEl ? String(horaEl.value || '').trim() : ''
+  };
+}
+
+function inferDiligenciaFromActuacionFields() {
+  const actuacion = document.getElementById('exp-actuacion') ? document.getElementById('exp-actuacion').value.trim() : '';
+  const guessPayload = {
+    actuacion: actuacion,
+    nFecha: document.getElementById('notif-fecha') ? document.getElementById('notif-fecha').value : '',
+    cFecha: document.getElementById('cedula-fecha') ? document.getElementById('cedula-fecha').value : ''
+  };
+  return {
+    fecha: extractIsoDateFromSpanishTextWithFallback(actuacion, guessYearFromPayload(guessPayload)),
+    hora: extractTimeHmFromSpanishText(actuacion)
+  };
+}
+
+function syncPreviewDiligenciaFields() {
+  const fechaEl = document.getElementById('prev-diligencia-fecha');
+  const horaEl = document.getElementById('prev-diligencia-hora');
+  const agendarEl = document.getElementById('prev-diligencia-agendar');
+  if (!fechaEl || !horaEl) return;
+  const inferred = inferDiligenciaFromActuacionFields();
+  if (!fechaEl.value && inferred.fecha) fechaEl.value = inferred.fecha;
+  if (!horaEl.value && inferred.hora) horaEl.value = inferred.hora;
+  if (agendarEl && inferred.fecha && !agendarEl.dataset.userSet) agendarEl.checked = true;
+  updatePreviewDiligenciaStatus();
+}
+
+function updatePreviewDiligenciaStatus() {
+  const statusEl = document.getElementById('prev-diligencia-status');
+  if (!statusEl) return;
+  const dil = getPreviewDiligenciaInputs();
+  const agendarEl = document.getElementById('prev-diligencia-agendar');
+  if (agendarEl) agendarEl.dataset.userSet = '1';
+  if (!dil.agendar) {
+    statusEl.textContent = 'No se creará evento de diligencia en Calendar (solo plazos u otros recordatorios).';
+    return;
+  }
+  if (!dil.fecha) {
+    statusEl.textContent = 'Indica la fecha de la diligencia para agendarla en Calendar.';
+    return;
+  }
+  const horaTxt = dil.hora ? (' a las ' + dil.hora) : ' (día completo; sin hora)';
+  statusEl.textContent = 'Se agendará el ' + formatDate(dil.fecha) + horaTxt + ' con aviso 30 min antes.';
+}
+
+function buildDiligenciaCalendarEvent(payload, attendeeObjs, idLine, footer, tipoCal, numero, cliente, abogadoLine, pdfLine) {
+  if (!payload.diligenciaAgendar) return null;
+  const fecha = String(payload.diligenciaFecha || '').trim();
+  if (!fecha) return null;
+  const hora = String(payload.diligenciaHora || '').trim();
+  const desc =
+    idLine + (payload.cliente || '') +
+    abogadoLine + pdfLine +
+    '\n\nDiligencia / audiencia' +
+    (payload.actuacion ? '\nActuación: ' + payload.actuacion : '') +
+    '\n\nFecha: ' + formatDate(fecha) + (hora ? (' · Hora: ' + hora) : '') +
+    '\nRecordatorio: 30 minutos antes.' + footer;
+  const ev = {
+    summary: '[SCI] Diligencia · ' + tipoCal + ' ' + numero + ' · ' + truncateEs(cliente, 36),
+    description: desc,
+    attendees: attendeeObjs,
+    guestsCanSeeOtherGuests: true,
+    guestsCanModify: false,
+    reminders: calendarReminders30MinBefore(),
+    transparency: 'opaque'
+  };
+  if (hora) {
+    const endHour = pad2(Math.min(23, Number(hora.slice(0, 2)) + 1));
+    ev.start = { dateTime: fecha + 'T' + hora + ':00', timeZone: 'America/Mexico_City' };
+    ev.end = { dateTime: fecha + 'T' + endHour + ':' + hora.slice(3, 5) + ':00', timeZone: 'America/Mexico_City' };
+  } else {
+    ev.start = { date: fecha };
+    ev.end = { date: calendarDayPlusOne(fecha) };
+  }
+  return ev;
+}
+
 async function calendarApiCreateEvent(accessToken, eventBody, sendUpdates) {
   const su = sendUpdates === undefined || sendUpdates === null ? 'all' : String(sendUpdates);
   const q = encodeURIComponent(su);
@@ -1459,33 +1576,10 @@ async function createSciCalendarEvents(accessToken, payload) {
     });
   }
 
-  const fechaActuacion = extractIsoDateFromSpanishTextWithFallback(payload.actuacion || '', guessYearFromPayload(payload));
-  const horaActuacion = extractTimeHmFromSpanishText(payload.actuacion || '');
-  if (!evs.length && fechaActuacion) {
-    const desc =
-      idLine + cliente +
-      abogadoLine + pdfLine +
-      '\n\nActuación señalada: ' + (payload.actuacion || 'Sin detalle') +
-      '\n\nFecha señalada: ' + formatDate(fechaActuacion) + (horaActuacion ? (' · Hora: ' + horaActuacion) : '') + footer;
-    const ev = {
-      summary: '[SCI] Actuación señalada · ' + tipoCal + ' ' + numero + ' · ' + truncateEs(cliente, 36),
-      description: desc,
-      attendees: attendeeObjs,
-      guestsCanSeeOtherGuests: true,
-      guestsCanModify: false,
-      reminders: { useDefault: true },
-      transparency: 'opaque'
-    };
-    if (horaActuacion) {
-      const endHour = pad2(Math.min(23, Number(horaActuacion.slice(0, 2)) + 1));
-      ev.start = { dateTime: fechaActuacion + 'T' + horaActuacion + ':00', timeZone: 'America/Mexico_City' };
-      ev.end = { dateTime: fechaActuacion + 'T' + endHour + ':' + horaActuacion.slice(3, 5) + ':00', timeZone: 'America/Mexico_City' };
-    } else {
-      ev.start = { date: fechaActuacion };
-      ev.end = { date: calendarDayPlusOne(fechaActuacion) };
-    }
-    evs.push(ev);
-  }
+  const diligenciaEv = buildDiligenciaCalendarEvent(
+    payload, attendeeObjs, idLine, footer, tipoCal, numero, cliente, abogadoLine, pdfLine
+  );
+  if (diligenciaEv) evs.push(diligenciaEv);
 
   if (!evs.length && payload.cFecha) {
     const desc =
@@ -2510,6 +2604,7 @@ function buildPreviewAndGo() {
 }
 
 function buildPreview() {
+  syncPreviewDiligenciaFields();
   const metaTipo  = getTipoAsuntoMeta();
   const numero    = document.getElementById('exp-numero').value.trim();
   const juzgado   = document.getElementById('exp-juzgado').value.trim();
@@ -2581,6 +2676,12 @@ function buildPreview() {
       ${cFecha ? row('Fecha de cédula', formatDate(cFecha)) : ''}
       ${nFecha ? row('Fecha de notificación', formatDate(nFecha)) : ''}
       ${actuacion ? row('Actuación notificada', actuacion) : ''}
+      ${(() => {
+        const d = getPreviewDiligenciaInputs();
+        if (!d.agendar || !d.fecha) return '';
+        const h = d.hora ? (' · ' + d.hora) : '';
+        return row('Diligencia en Calendar', formatDate(d.fecha) + h + ' · aviso 30 min antes');
+      })()}
     </table>
 
     ${termsHTML}
@@ -2662,6 +2763,8 @@ function collectEmailPayload() {
   body += `AVISO: Se adjunta la cédula de notificación en PDF cuando el archivo está cargado.\n`;
   body += `Por favor verificar los datos antes de actuar.\n`;
   body += `— Sistema de Notificaciones SCI Despacho Jurídico\n`;
+
+  const dilPreview = getPreviewDiligenciaInputs();
 
   return {
     toList,
@@ -2767,8 +2870,9 @@ async function sendCalendarOnly() {
   }
 
   const fechaActuacion = extractIsoDateFromSpanishTextWithFallback(payload.actuacion || '', guessYearFromPayload(payload));
-  if (!terminos.length && !payload.nFecha && !fechaActuacion && !payload.cFecha) {
-    alert('No hay plazos ni fechas detectables para crear eventos (notificación, actuación o cédula).');
+  const hasDiligencia = payload.diligenciaAgendar && payload.diligenciaFecha;
+  if (!terminos.length && !payload.nFecha && !fechaActuacion && !payload.cFecha && !hasDiligencia) {
+    alert('No hay plazos ni fechas detectables para crear eventos (notificación, actuación, diligencia o cédula).');
     return;
   }
 
